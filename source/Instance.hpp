@@ -73,7 +73,6 @@ public:
         digitalMode("FT8"),
         freqCal(1.0),
         iq_len(0),
-        nMem(0),
         numjt9threads(3),
         radioSR(0),
         screenPrinter(nullptr),
@@ -122,17 +121,24 @@ public:
         screenPrinter = sp;
         decoderPool = dp;
 
-        nMem = findBand(static_cast<std::int64_t>(ssbFreq), SMNumber);
+        const FrequencyHz adjustedSSBFreq = static_cast<FrequencyHz>(std::round(static_cast<double>(ssbFreq) / freqCal));
+        screenPrinter->print("Adjusted SSB freq: " + std::to_string(adjustedSSBFreq) + " Hz", LOG_LEVEL::DEBUG);
+
+        const int nMem = findBand(static_cast<std::int64_t>(adjustedSSBFreq), SMNumber);
         if (-1 == nMem) {
-            std::cerr << "Unable to open CWSL shared memory at the specified frequency. Bad frequency or sharedmem specified." << std::endl;
+            screenPrinter->err("Unable to open CWSL shared memory at the specified frequency. Bad frequency or sharedmem specified.");
+            screenPrinter->err("Note that frequency calibration may shift the expected frequency outside of what is expected!");
             return false;
         }
 
         // try to open shared memory
         const std::string name = createSharedMemName(nMem, SMNumber);
         if (!SM.Open(name.c_str())) {
-            fprintf(stderr, "Can't open shared memory for %d receiver\n", nMem);
-            return EXIT_FAILURE;
+            screenPrinter->err("Can't open shared memory : " + name);
+            return false;
+        }
+        else {
+            screenPrinter->debug("Opened shared memory OK: " + name);
         }
 
         // get info about channel
@@ -142,14 +148,13 @@ public:
         screenPrinter->print("Receiver: " + std::to_string(nMem)
             + "\tSample Rate: " + std::to_string(radioSR)
             + "\tBlock In Samples: " + std::to_string(iq_len)
-            + "\tLO: " + std::to_string(SHDR->L0),
+            + "\tLO: " + std::to_string(SHDR->L0)
+            + "\tShared Memory: " + name,
             LOG_LEVEL::INFO);
 
         const bool USB = true;
 
         screenPrinter->print("SSB Bandwidth: " + std::to_string(ssbBw) + " Hz", LOG_LEVEL::DEBUG);
-        const FrequencyHz adjustedSSBFreq = static_cast<FrequencyHz>(std::round(static_cast<double>(ssbFreq) / freqCal));
-        screenPrinter->print("Adjusted SSB freq: " + std::to_string(adjustedSSBFreq) + " Hz", LOG_LEVEL::DEBUG);
 
         // F is always Fc-LO
         const int32_t F = adjustedSSBFreq - static_cast<FrequencyHz>(SHDR->L0);
@@ -498,7 +503,6 @@ public:
     ring_buffer_t< decode_audio_buffer_t<float> > decode_audio_ring_buffer;
     std::thread readPipeThread;
     std::string digitalMode;
-    int nMem;
     int SMNumber;
     CSharedMemory SM;
     uint32_t radioSR;

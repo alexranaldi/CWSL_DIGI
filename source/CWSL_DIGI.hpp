@@ -24,7 +24,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <string>
 
 static const std::string PROGRAM_NAME = "CWSL_DIGI";
-static const std::string PROGRAM_VERSION = "0.67-beta";
+static const std::string PROGRAM_VERSION = "0.68-beta";
 
 constexpr float FT8_PERIOD = 15.0f;
 constexpr float FT4_PERIOD = 6.048f;

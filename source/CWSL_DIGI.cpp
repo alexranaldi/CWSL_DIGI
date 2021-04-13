@@ -65,8 +65,6 @@ std::atomic_bool terminateFlag;
 
 std::string badMessageLogFile = "";
 
-std::ofstream logFile;
-std::string logFileName;
 
 std::string decodesFileName;
 
@@ -155,11 +153,44 @@ int main(int argc, char **argv)
     po::store(cmdLineOpts, vm);
     po::notify(vm);
 
+    // Parse Logging Options
+
+    std::string logFileName = "";
+
+    int logLevel = static_cast<int>(LOG_LEVEL::INFO);
+    if (vm.count("logging.loglevel")) {
+        logLevel = vm["logging.loglevel"].as<int>();
+    }
+
+    std::shared_ptr<ScreenPrinter> printer = std::make_shared<ScreenPrinter>();
+    printer->setLogLevel(logLevel);
+
+    if (vm.count("logging.logfile")) {
+        std::string logFileName = vm["logging.logfile"].as<std::string>();
+        printer->enableLogFile(logFileName);
+    }
+
+    bool printHandledReports = true;
+    if (vm.count("logging.printreports")) {
+        printHandledReports = vm["logging.printreports"].as<bool>();
+    }
+
     if (vm.count("logging.badmsglog")) {
         badMessageLogFile = vm["logging.badmsglog"].as<std::string>();
     }
 
-    terminateFlag = false;
+    bool printJT9Output = false;
+    if (vm.count("logging.printjt9output")) {
+        printJT9Output = vm["logging.printjt9output"].as<bool>();
+    }
+
+
+    if (vm.count("logging.decodesfile")) {
+        decodesFileName = vm["logging.decodesfile"].as<std::string>();
+    }
+    else {
+        decodesFileName = "";
+    }
 
     // Parse radio settings
 
@@ -349,56 +380,17 @@ int main(int argc, char **argv)
         }
     }
 
-    // Parse Logging Options
-
-    int logLevel = static_cast<int>(LOG_LEVEL::INFO);
-    if (vm.count("logging.loglevel")) {
-        logLevel = vm["logging.loglevel"].as<int>();
-    }
-
-    std::shared_ptr<ScreenPrinter> printer = std::make_shared<ScreenPrinter>();
-    printer->setLogLevel(logLevel);
-
-    if (vm.count("logging.logfile")) {
-        std::string logFileName = vm["logging.logfile"].as<std::string>();
-        printer->enableLogFile(logFileName);
-    }
-
-    bool printHandledReports = true;
-    if (vm.count("logging.printreports")) {
-        printHandledReports = vm["logging.printreports"].as<bool>();
-    }
-
-    bool printJT9Output = false;
-    if (vm.count("logging.printjt9output")) {
-        printJT9Output = vm["logging.printjt9output"].as<bool>();
-    }
-
     int numjt9threads = 3;
-    if (vm.count("logging.numjt9threads")) {
-        numjt9threads = vm["logging.numjt9threads"].as<int>();
+    if (vm.count("wsjtx.numjt9threads")) {
+        numjt9threads = vm["wsjtx.numjt9threads"].as<int>();
         if (numjt9threads > 9) {
-            std::cerr << "logging.numjt9threads is too high, setting to 9" << std::endl;
+            std::cerr << "wsjtx.numjt9threads is too high, setting to 9" << std::endl;
             numjt9threads = 9;
         }
         else if (numjt9threads < 1) {
-            std::cerr << "logging.numjt9threads is too small, setting to 1" << std::endl;
+            std::cerr << "wsjtx.numjt9threads is too small, setting to 1" << std::endl;
             numjt9threads = 1;
         }
-    }
-
-    if (vm.count("logging.decodesfile")) {
-        decodesFileName = vm["logging.decodesfile"].as<std::string>();
-    }
-    else {
-        decodesFileName = "";
-    }
-
-    // Log File
-    if (vm.count("logging.logfile")) {
-        logFileName.assign(vm["logging.logfile"].as<std::string>());
-        std::cout << "Log file: " << logFileName << std::endl;
-        logFile.open(logFileName, std::ofstream::ate | std::ofstream::out);
     }
 
     // Parse reporting options
@@ -518,7 +510,7 @@ int main(int argc, char **argv)
         std::unique_ptr<Instance> instance = std::make_unique<Instance>();
         instances.push_back(std::move(instance));
         printer->print("Initializing instance " + std::to_string(k + 1) + " of " + std::to_string(decoders.size()), LOG_LEVEL::DEBUG);
-        instances.back()->init(
+        const bool status = instances.back()->init(
             f, 
             smnum, 
             mode, 
@@ -533,6 +525,10 @@ int main(int argc, char **argv)
             wsprAudioScaleFactor, 
             printer, 
             decoderPool);
+        if (!status) {
+            std::cerr << "Failed to initialize decoder instance!" << std::endl;
+            return EXIT_FAILURE;
+        }
     }
 
     //
@@ -540,6 +536,7 @@ int main(int argc, char **argv)
     //
 
     std::cout << std::endl << "Main loop started! Press Q to terminate." << std::endl;
+    terminateFlag = false;
     while (!terminateFlag) {
         // Was Exit requested?
         if (_kbhit()) {

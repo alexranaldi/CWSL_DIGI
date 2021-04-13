@@ -108,9 +108,14 @@ public:
             }
 
             if (message.lvl <= logLevel) {
-                std::cout << message.str << std::endl;
+                std::string str = message.str;
+                if (LOG_LEVEL::ERR == message.lvl) {
+                    str = "### ERROR ### :: " + message.str;
+                }
+
+                std::cout << str << std::endl;
                 if (logFileEnabled) {
-                    ofs << message.str << std::endl;
+                    ofs << str << std::endl;
                 }
             }
         }
