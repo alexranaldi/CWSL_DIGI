@@ -112,25 +112,16 @@ public:
         Recv_addr.sin_addr.s_addr = inet_addr(mServerIP.c_str());
 
         mSendThread = std::thread(&RBNHandler::processingLoop, this);
+        SetThreadPriority(mSendThread.native_handle(), THREAD_PRIORITY_IDLE);
         mSendThread.detach();
 
         return true;
     }
 
     void processingLoop() {
-  
-
         while (!terminateFlag) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             const auto reportCount = makePackets();
-            if (!reportCount) {
-                continue;
-            }
-
-            //std::cout << "RBN Total reports packetized: " << reportCount << std::endl;
-            //std::cout << "RBN Packets waiting to be sent:" << mPackets.size() << std::endl;
-
             while (!mPackets.empty() && !terminateFlag) {
                 auto packet = mPackets.front();
                 mPackets.pop();
@@ -139,7 +130,7 @@ public:
         }
     }
 
-    void send(Packet packet) {
+    void send(const Packet& packet) {
         //std::cout << "Sending packet, num bytes: " << packet.size() << std::endl;
         sendto(mSocket, (const char*)packet.data(), (int)packet.size(), 0, (sockaddr*)& Recv_addr, sizeof(Recv_addr));
     }

@@ -26,76 +26,107 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <array>
 
 template <typename T>
-struct decode_audio_buffer_t {
-	std::size_t write_index;
-	std::size_t read_index;
-	T* buf;
-    std::atomic<bool> paused;
+struct sample_buffer_t {
+public:
+    std::uint64_t write_index;
+    T* buf;
     std::uint64_t startEpochTime;
     std::size_t size;
 
-	decode_audio_buffer_t() : 
-		write_index(0),
-		read_index(0),
-        paused(false),
+    sample_buffer_t() :
+        write_index(0),
         size(0),
         buf(nullptr),
         startEpochTime(0)
-	{
-	}
+    {
+    }
+
+    std::size_t byte_size() const {
+        return sizeof(T) * size;
+    }
+
+    sample_buffer_t(const sample_buffer_t& obj) {
+        startEpochTime = obj.startEpochTime;
+        write_index = 0;
+        size = obj.size;
+        buf = reinterpret_cast<T*>(malloc(byte_size()));
+        memcpy(buf, obj.buf, byte_size());
+    }
+
+    virtual ~sample_buffer_t() {
+        deallocate();
+    }
+
+    void deallocate() {
+        if (buf) {
+            free(buf);
+            buf = nullptr;
+        }
+    }
+
+    void initialize(const std::size_t new_size) {
+        init(new_size);
+    }
 
     void init(const std::size_t new_size)
     {
         size = new_size;
         buf = reinterpret_cast<T*>(malloc(new_size * sizeof(T)));
-        paused = false;
         write_index = 0;
-        read_index = 0;
         startEpochTime = 0;
     }
 
-    void pause()
-    {
-        paused = true;
+    bool full() const {
+        return size == write_index - 1;
     }
 
-    void resume()
+    bool write(const std::vector<T>& samples)
     {
-        paused = false;
-    }
-
-	bool write(const std::vector<T>& samples) 
-	{
-        if (paused)
+        if ((samples.size() + write_index) > size)
         {
-            return false;
-        }
-		else if ( (samples.size() + write_index) >= size )
-		{
             size_t k = 0;
-            while (write_index + 1 < size) {
+            while (write_index < size) {
                 buf[write_index] = samples[k];
                 write_index++;
                 k++;
             }
             return false;
-
-		}
-		for (const auto& sample : samples) {
-			buf[write_index] = sample;
-			write_index++;
-		}
-		return true;
-	}
-
-	void clear() 
-	{
-        for (size_t k = 0; k < size; ++k) {
-		    buf[k] = 0;
         }
-		write_index = 0;
-		read_index = 0;
-	}
+        else {
+            for (const auto& sample : samples) {
+                buf[write_index] = sample;
+                write_index++;
+            }
+            return true;
+        }
+    }
+
+    void resetIndices() {
+        write_index = 0;
+    }
+
+    void reset() {
+        resetIndices();
+    }
+
+    void scale(const T factor) {
+        for (size_t k = 0; k < size; ++k) {
+            buf[k] *= factor;
+        }
+    }
+
+    void clear()
+    {
+        for (size_t k = 0; k < size; ++k) {
+            buf[k] = 0;
+        }
+        resetIndices();
+    }
+    
+
 };
 
-
+template <typename T>
+struct decode_audio_buffer_t : public sample_buffer_t<T> {
+    
+};

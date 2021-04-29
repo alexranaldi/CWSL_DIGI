@@ -5,6 +5,10 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <chrono>
+
+using namespace std::chrono_literals;
+
 
 template <class T>
 class SafeQueue
@@ -27,6 +31,17 @@ public:
         c.notify_one();
     }
 
+    bool dequeue(T& item) {
+        std::unique_lock<std::mutex> lock(m);
+        if (q.empty()) 
+        { 
+            return false; 
+        }
+        item = q.front();
+        q.pop();
+        return true;
+    }
+
     T dequeue(void)
     {
         std::unique_lock<std::mutex> lock(m);
@@ -38,6 +53,22 @@ public:
         T val = q.front();
         q.pop();
         return val;
+    }
+
+    bool dequeue_timeout(T& item)
+    {
+        std::unique_lock<std::mutex> lock(m);
+        int i;
+        while (q.empty())
+        {
+            // release lock as long as the wait and reaquire it afterwards.
+            if (c.wait_for(lock, 250ms) == std::cv_status::timeout) {
+                return false;
+            }
+        }
+        item = q.front();
+        q.pop();
+        return true;
     }
 
     bool empty(void)

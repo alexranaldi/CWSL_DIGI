@@ -29,68 +29,90 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 // Used internally as a single producer single consumer queue (ring buffer)
 template <typename T>
 struct ring_buffer_t {
-	T* recs;
-	// Use atomics for indices to prevent instruction reordering
-	std::atomic_int read_index;
-	std::atomic_int write_index;
-	// Number of items the ring buffer can hold.
-	std::size_t size;
-	std::atomic<bool> terminateFlag = {0};
+    T* recs;
+    // Use atomics for indices to prevent instruction reordering
+    std::atomic<std::uint64_t> read_index;
+    std::atomic<std::uint64_t> write_index;
+    // Number of items the ring buffer can hold.
+    std::size_t size;
+    std::atomic_bool terminateFlag = false;
+    bool initialized = false;
 
-	ring_buffer_t() :
-		terminateFlag(false),
-		recs(nullptr),
+    ring_buffer_t() :
+        terminateFlag(false),
+        recs(nullptr),
+        initialized(false),
         size(0)
-	{
-	}
-
-	bool initialize(const size_t sizeIn) 
     {
-		read_index = 0;
-		write_index = 0;
-		size = sizeIn;
-		recs = reinterpret_cast<T*>(malloc(sizeof(T) * size));
-		return (recs != nullptr);
-	}
+    }
 
-	void terminate() 
+    bool initialize(const size_t sizeIn)
     {
-		terminateFlag = true;
-	}
+        size = sizeIn;
+        recs = reinterpret_cast<T*>(malloc(sizeof(T) * size));
+        initialized = recs != nullptr;
+        reset();
+        return initialized;
+    }
 
-	~ring_buffer_t() 
-	{
-		if (nullptr != recs)
-		{
-			free(recs);
-		}
-	}
+    void reset() {
+        read_index = 0;
+        write_index = 0;
+        terminateFlag = false;
+    }
 
-	bool wait_for_empty_slot() const 
+    void terminate()
     {
-		while ((read_index == write_index + 1) || (read_index == 0 && static_cast<int64_t>(write_index) == static_cast<int64_t>(size) - 1)) {
-			std::this_thread::sleep_for(std::chrono::microseconds(100));
-			if (terminateFlag) {
-				return false;
-			}
-		}
-		return true;
-	}
+        terminateFlag = true;
+    }
 
-	void inc_write_index()
+    ~ring_buffer_t()
     {
-		// cast to signed so we don't break subtraction
-		if (static_cast<int64_t>(write_index) == static_cast<int64_t>(size) - 1) {
-			write_index = 0;
-		}
-		else {
-			write_index++;
-		}
-	}
+        if (nullptr != recs)
+        {
+            free(recs);
+        }
+    }
+
+    bool full() const {
+        return ((read_index == write_index + 1) || (read_index == 0 && static_cast<int64_t>(write_index) == static_cast<int64_t>(size) - 1));
+    }
+
+    bool wait_for_empty_slot() const
+    {
+        while (full()) {
+            std::this_thread::yield();
+            if (terminateFlag) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void inc_write_index()
+    {
+        // cast to signed so we don't break subtraction
+        if (static_cast<int64_t>(write_index) == static_cast<int64_t>(size) - 1) {
+            write_index = 0;
+        }
+        else {
+            write_index++;
+        }
+    }
+
+    std::uint64_t get_next_write_index()
+    {
+        // cast to signed so we don't break subtraction
+        if (static_cast<int64_t>(write_index) == static_cast<int64_t>(size) - 1) {
+            return 0;
+        }
+        else {
+            return write_index + 1;
+        }
+    }
 
     T& pop_ref()
     {
-        wait_for_data();
         T& curr = recs[read_index];
         if (read_index == size - 1) {
             read_index = 0;
@@ -101,29 +123,28 @@ struct ring_buffer_t {
         return curr;
     }
 
-	T pop() 
+    T pop()
     {
-		wait_for_data();
-		T curr = recs[read_index];
-		if (read_index == size - 1) {
-			read_index = 0;
-		}
-		else {
-			read_index++;
-		}
-		return curr;
-	}
+        T curr = recs[read_index];
+        if (read_index == size - 1) {
+            read_index = 0;
+        }
+        else {
+            read_index++;
+        }
+        return curr;
+    }
 
-	bool wait_for_data() const 
+    bool wait_for_data() const
     {
-		while (empty()) {
-			std::this_thread::sleep_for(std::chrono::microseconds(220));
-			if (terminateFlag) {
-				return false;
-			}
-		}
-		return true;
-	}
+        while (empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            if (terminateFlag) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     bool empty() const {
         return read_index == write_index;

@@ -133,6 +133,7 @@ public:
         mTimeDescriptorsSent = std::chrono::steady_clock::now() - 24h;
 
         mSendThread = std::thread(&PSKReporter::processingLoop, this);
+        SetThreadPriority(mSendThread.native_handle(), THREAD_PRIORITY_IDLE);
         mSendThread.detach();
 
         return true;
@@ -398,6 +399,7 @@ public:
     }
 
     void terminate() {
+        screenPrinter->debug("PSK Reporter interface terminating");
         terminateFlag = true;
     }
 

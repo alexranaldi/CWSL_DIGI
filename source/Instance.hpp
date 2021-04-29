@@ -39,498 +39,312 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include "StringUtils.hpp"
 #include "HamUtils.hpp"
 #include "ScreenPrinter.hpp"
+#include "Receiver.hpp"
 
 #include "DecoderPool.hpp"
 
 // SSB demod
 #include "../Utils/SSBD.hpp"
 
-#include <boost/lexical_cast.hpp>
-using boost::lexical_cast;
-
-#include <boost/uuid/uuid.hpp>
-using boost::uuids::uuid;
-
-#include <boost/uuid/uuid_generators.hpp>
-using boost::uuids::random_generator;
-
-#include <boost/uuid/uuid_io.hpp>
-
-const float clipVal = std::pow(2.0f, 15.0f) - 1.0f;
-
-static inline std::string make_uuid()
-{
-    return lexical_cast<std::string>((random_generator())());
-}
 
 class Instance {
 public:
-    Instance() : 
-        audioScaleFactor_ft(0.0),
-        audioScaleFactor_wspr(0.0),
-        decodedepth(3),
-        decRatio(0),
-        digitalMode("FT8"),
-        freqCal(1.0),
-        iq_len(0),
-        numjt9threads(3),
-        radioSR(0),
-        screenPrinter(nullptr),
-        SHDR(nullptr),
-        SM(),
-        ssbd(nullptr),
-        ssbBw(0),
-        SSB_SR(0),
-        ssbFreq(0),
-        terminateFlag(false),
-        waveSampleRate(0)
-    {}
-    virtual ~Instance(){}
-    Instance(const Instance&) = delete;
-
-    Instance(Instance&& o) noexcept 
-    {}
-
-    bool init(
+    Instance(
+        std::shared_ptr<Receiver> receiverIn,
+        const size_t idIn,
+        std::shared_ptr<std::atomic_bool> predIn,
         const FrequencyHz ssbFreqIn,
-        const int SMNumber, 
-        const std::string& mode, 
-        const uint32_t bandwidth,
-        const double freqCalIn,
-        const uint32_t highestDecodeFreqIn,
-        const std::string& wavPathIn,
+        const FrequencyHz calibratedFreqIn,
+        const std::string& modeIn,
         const uint32_t waveSampleRateIn,
-        const int decodedepthIn,
-        const int numjt9threadsIn,
         const float audioScaleFactor_ftIn,
         const float audioScaleFactor_wsprIn,
         std::shared_ptr<ScreenPrinter> sp,
-        std::shared_ptr<DecoderPool> dp)
+        std::shared_ptr<DecoderPool> dp
+        ) : 
+        audioScaleFactor_ft(audioScaleFactor_ftIn),
+        audioScaleFactor_wspr(audioScaleFactor_wsprIn),
+        pred(predIn),
+        ssbd(nullptr),
+        ssbFreq(ssbFreqIn),
+        calibratedSSBFreq(calibratedFreqIn),
+        digitalMode(modeIn),
+        decRatio(0),
+        id(idIn),
+        iq_buffer(nullptr),
+        iq_reader_id(0),
+        waveSampleRate(waveSampleRateIn),
+        screenPrinter(sp),
+        receiver(receiverIn),
+        decoderPool(dp),
+        smname(""),
+        terminateFlag(false),
+        threadStarted(false),
+        twKey(tw->addThread("instance " + std::to_string(id)))
+        {}
+
+    virtual ~Instance(){
+        terminate();
+    }
+
+    std::string getMode() const {
+        return digitalMode;
+    }
+
+    FrequencyHz getFrequency() const {
+        return ssbFreq;
+    }
+
+    void terminate() {
+        screenPrinter->debug(instanceLog() + "Instance terminating...");
+        af_buffer.terminate();
+        terminateFlag = true;
+        if (threadStarted) {
+            while (!sampleManagerThread.joinable()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            sampleManagerThread.join();
+            threadStarted = false;
+        }
+    }
+
+    bool init()
     {
-        audioScaleFactor_ft = audioScaleFactor_ftIn;
-        audioScaleFactor_wspr = audioScaleFactor_wsprIn;
-        ssbFreq = ssbFreqIn;
-        digitalMode = mode;
-        ssbBw = bandwidth;
-        freqCal = freqCalIn;
-        highestDecodeFreq = highestDecodeFreqIn;
-        wavPath = wavPathIn;
-        waveSampleRate = waveSampleRateIn;
-        decodedepth = decodedepthIn;
-        numjt9threads = numjt9threadsIn;
-        screenPrinter = sp;
-        decoderPool = dp;
+        terminateFlag = false;
 
-        const FrequencyHz adjustedSSBFreq = static_cast<FrequencyHz>(std::round(static_cast<double>(ssbFreq) / freqCal));
-        screenPrinter->print("Adjusted SSB freq: " + std::to_string(adjustedSSBFreq) + " Hz", LOG_LEVEL::DEBUG);
-
-        const int nMem = findBand(static_cast<std::int64_t>(adjustedSSBFreq), SMNumber);
-        if (-1 == nMem) {
-            screenPrinter->err("Unable to open CWSL shared memory at the specified frequency. Bad frequency or sharedmem specified.");
-            screenPrinter->err("Note that frequency calibration may shift the expected frequency outside of what is expected!");
-            return false;
-        }
-
-        // try to open shared memory
-        const std::string name = createSharedMemName(nMem, SMNumber);
-        if (!SM.Open(name.c_str())) {
-            screenPrinter->err("Can't open shared memory : " + name);
-            return false;
-        }
-        else {
-            screenPrinter->debug("Opened shared memory OK: " + name);
-        }
-
-        // get info about channel
-        SHDR = SM.GetHeader();
-        const uint32_t radioSR = static_cast<uint32_t>(SHDR->SampleRate);
-        iq_len = SHDR->BlockInSamples;
-        screenPrinter->print("Receiver: " + std::to_string(nMem)
-            + "\tSample Rate: " + std::to_string(radioSR)
-            + "\tBlock In Samples: " + std::to_string(iq_len)
-            + "\tLO: " + std::to_string(SHDR->L0)
-            + "\tShared Memory: " + name,
-            LOG_LEVEL::INFO);
-
-        const bool USB = true;
-
-        screenPrinter->print("SSB Bandwidth: " + std::to_string(ssbBw) + " Hz", LOG_LEVEL::DEBUG);
-
-        // F is always Fc-LO
-        const int32_t F = adjustedSSBFreq - static_cast<FrequencyHz>(SHDR->L0);
-        screenPrinter->print("SSBD Freq: " + std::to_string(F) + " Hz", LOG_LEVEL::DEBUG);
-        ssbd = std::make_unique< SSBD<float> >(radioSR, ssbBw, static_cast<float>(F), static_cast<bool>(USB));
-        SSB_SR = static_cast<std::uint32_t>(ssbd->GetOutRate());
-        screenPrinter->debug("SSBD SR: " + std::to_string(SSB_SR));
-        decRatio = radioSR / SSB_SR;
-        screenPrinter->print("SSBD Dec Ratio: " + std::to_string(decRatio) + " Hz", LOG_LEVEL::DEBUG);
+        SSB_SR = Wave_SR;
+        decRatio = receiver->getSampleRate() / Wave_SR;
 
         //
         // Prepare circular buffers
         // 
 
-        screenPrinter->debug("Preparing IQ buffer");
-        bool initStatus = iq_buffer.initialize(256);
-        if (!initStatus) {
-            std::cerr << "Failed to initialize memory" << std::endl;
-            return EXIT_FAILURE;
+        try {
+            if (af_buffer.initialized) {
+                af_buffer.reset();
+                for (size_t k = 0; k < af_buffer.size; ++k) {
+                    af_buffer.recs[k].reset();
+                }
+            }
+            else {
+                const bool initStatus = af_buffer.initialize(2);
+                if (!initStatus) {
+                    screenPrinter->err(instanceLog() + "Failed to initialize memory for af buffer");
+                    return false;
+                }
+
+                const size_t afBufNumSa = static_cast<size_t>( static_cast<double>(SSB_SR) * static_cast<double>(getRXPeriod(digitalMode)+2) );
+                screenPrinter->debug(instanceLog() + "Initializing af ring buffer, length = " + std::to_string(afBufNumSa) + " samples");
+
+                for (size_t k = 0; k < af_buffer.size; ++k) {
+                    screenPrinter->debug(instanceLog() + "Initializing af ring buffer, buffer " + std::to_string(k) + " of " + std::to_string(af_buffer.size));
+                    af_buffer.recs[k].init(afBufNumSa);
+                    memset(af_buffer.recs[k].buf, 0.0f, af_buffer.recs[k].byte_size());
+                    af_buffer.recs[k].resetIndices();
+                }
+            }
         }
-        for (size_t k = 0; k < iq_buffer.size; ++k) {
-            iq_buffer.recs[k] = reinterpret_cast<std::complex<float>*>(malloc(sizeof(std::complex<float>) * iq_len));
+        catch (const std::exception& e) {
+            screenPrinter->err(instanceLog() + std::string("Caught exception allocating af buffers: ") + e.what());
+            return false;
         }
-        screenPrinter->debug("Initializing audio ring buffer");
-        initStatus = decode_audio_ring_buffer.initialize(2);
-        if (!initStatus) {
-            std::cerr << "Failed to initialize decode_audio_ring_buffer" << std::endl;
-            return EXIT_FAILURE;
-        }
-        const float rxPeriod = getRXPeriod(digitalMode);
-        const int NUM_SAMPLES_UPSAMPLED = static_cast<int>(rxPeriod * static_cast<float>(waveSampleRate));
-        for (size_t k = 0; k < decode_audio_ring_buffer.size; ++k) {
-            screenPrinter->debug("Initializing audio buffer " + std::to_string(k) + " of " + std::to_string(decode_audio_ring_buffer.size));
-            decode_audio_ring_buffer.recs[k].init(NUM_SAMPLES_UPSAMPLED);
-            decode_audio_ring_buffer.recs[k].clear();
-        }
+
+        iq_buffer = receiver->getIQBuffer();
+        iq_reader_id = iq_buffer->addReader();
 
         //
         //  Start Threads
         //
 
-        screenPrinter->print("Creating receiver thread...", LOG_LEVEL::DEBUG);
-        iqThread = std::thread(&Instance::readIQ, this);
-        iqThread.detach();
-        
-        screenPrinter->print("Creating SSB Demodulator thread...", LOG_LEVEL::DEBUG);
-        demodThread = std::thread(&Instance::demodulate<float>, this);
-        demodThread.detach();
-
-        screenPrinter->print("Creating samplemanager thread...", LOG_LEVEL::DEBUG);
+        tw->threadStarted(twKey);
+        screenPrinter->print(instanceLog() + "Creating samplemanager thread...", LOG_LEVEL::DEBUG);
         sampleManagerThread = std::thread(&Instance::sampleManager, this);
-        sampleManagerThread.detach();
-
-        screenPrinter->print("Creating candidate finder thread...", LOG_LEVEL::DEBUG);
-        wavThread = std::thread(&Instance::getCandidatesLoop, this);
-        wavThread.detach();
+        threadStarted = true;
 
         return true;
     }
 
-    void getCandidatesLoop() {
-        while (!terminateFlag) {
-            // Wait for another audio buffer to become full.. (blocks)
-            decode_audio_buffer_t<float>& audio_buffer = decode_audio_ring_buffer.pop_ref();
-            if (audio_buffer.startEpochTime == 0) {
-                continue;
-            }
+    void sampleManager() {
+        screenPrinter->debug(instanceLog() + "Sample manager thread started!");
+        const size_t iq_len = receiver->getIQLength();
 
-            screenPrinter->print("popped audio buffer, size: " + std::to_string(audio_buffer.size), LOG_LEVEL::DEBUG);
-            if (terminateFlag) {
-                break;
-            }
+        const std::int32_t demodFreq = calibratedSSBFreq - receiver->getLO();
 
-            std::string fpart = make_uuid() + ".wav";
-            const std::string fileName = wavPath + "\\" + fpart;
+        screenPrinter->print("SSBD Freq: " + std::to_string(demodFreq) + " Hz", LOG_LEVEL::DEBUG);
 
-            float maxVal = std::numeric_limits<float>::lowest();
-            for (size_t k = 0; k < audio_buffer.size; ++k) {
-                if (audio_buffer.buf[k] > maxVal) {
-                    maxVal = audio_buffer.buf[k];
-                }
-            }
-            // std::cout << "largest value: " << maxVal << std::endl;
+        ssbd = std::make_unique< SSBD<float> >(receiver->getSampleRate(), SSB_BW, static_cast<float>(demodFreq), USB);
 
+        SSB_SR = static_cast<std::uint32_t>(ssbd->GetOutRate());
+        screenPrinter->debug(instanceLog() + "SSBD SR: " + std::to_string(SSB_SR));
 
-             // parens prevent macro expansion, fix windows.h max definition collision
-            float minVal = (std::numeric_limits<float>::max)();
-            for (size_t k = 0; k < audio_buffer.size; ++k) {
-                if (audio_buffer.buf[k] < minVal) {
-                    minVal = audio_buffer.buf[k];
-                }
-            }
-            // std::cout << "smallest value: " << minVal << std::endl;
-
-            if (std::fabs(minVal) > maxVal) {
-                maxVal = std::fabs(minVal);
-            }
-
-            float factor = clipVal / (maxVal + 1.0f);
-            if (digitalMode == "WSPR") {
-                factor *= audioScaleFactor_wspr;
-            }
-            else {
-                factor *= audioScaleFactor_ft;
-            }
-
-            screenPrinter->print("Computed audio scale factor: " + std::to_string(factor), LOG_LEVEL::DEBUG);
-            screenPrinter->print("Maximum audio value: " + std::to_string(factor*maxVal), LOG_LEVEL::DEBUG);
-
-            std::thread wavThread = std::thread(&Instance::waveWrite, this, std::ref(audio_buffer), fileName, factor);
-            wavThread.join();
-            
-            FileToDecode toDecode(fileName, digitalMode, audio_buffer.startEpochTime, ssbFreq);
-            toDecode.baseFreq = ssbFreq;
-            toDecode.epochTime = audio_buffer.startEpochTime;
-            toDecode.filename = fileName;
-            toDecode.mode = digitalMode;
-            decoderPool->push(toDecode);
-
-        }
-    }
-
-    void waveWrite(decode_audio_buffer_t<float>& audioBuffer, const std::string& fileName, const float factor) {
-        screenPrinter->print("Beginning wave file generation...", LOG_LEVEL::DEBUG);
-
-        std::size_t DataLen = audioBuffer.size * sizeof(std::int16_t);
-        screenPrinter->print("Audio Data Length (bytes): " + std::to_string(DataLen), LOG_LEVEL::DEBUG);
-
-        WavHdr Hdr;
-
-        Hdr._RIFF[0] = 'R'; Hdr._RIFF[1] = 'I'; Hdr._RIFF[2] = 'F'; Hdr._RIFF[3] = 'F';
-        Hdr.FileLen = static_cast<uint32_t>((sizeof(Hdr) + DataLen) - 8);
-        Hdr._WAVE[0] = 'W'; Hdr._WAVE[1] = 'A'; Hdr._WAVE[2] = 'V'; Hdr._WAVE[3] = 'E';
-        Hdr._fmt[0] = 'f'; Hdr._fmt[1] = 'm'; Hdr._fmt[2] = 't'; Hdr._fmt[3] = ' ';
-
-        Hdr.FmtLen = sizeof(WAVEFORMATEX);
-        Hdr.Format.wFormatTag = WAVE_FORMAT_PCM;
-        Hdr.Format.nChannels = 1;
-        Hdr.Format.nSamplesPerSec = 12000;
-        Hdr.Format.nBlockAlign = 2;
-        Hdr.Format.nAvgBytesPerSec = Hdr.Format.nSamplesPerSec * Hdr.Format.nBlockAlign;
-        Hdr.Format.wBitsPerSample = 16;
-        Hdr.Format.cbSize = 0;
-
-        Hdr._data[0] = 'd'; Hdr._data[1] = 'a'; Hdr._data[2] = 't'; Hdr._data[3] = 'a';
-        Hdr.DataLen = static_cast<DWORD>(DataLen);
-
-        std::vector<int16_t> wave16data;
-        wave16data.reserve(audioBuffer.size);
-
-        for (std::size_t k = 0; k < audioBuffer.size; ++k) {
-            wave16data.push_back(static_cast<int16_t>(std::round(audioBuffer.buf[k] * factor)));
-        }
-
-        std::uint32_t bytesWritten = 0;
-
-        HANDLE File = wavOpen(fileName, Hdr);
-
-        void* Data = wave16data.data();
-
-        const bool writeStatus = WriteFile(File, Data, (DWORD)DataLen, (LPDWORD)& bytesWritten, NULL);
-        if (!writeStatus) {
-            std::cerr << "Error writing wave file data" << std::endl;
-        }
-        CloseHandle(File);
-
-        screenPrinter->print("Wave writing complete.", LOG_LEVEL::DEBUG);
-    }
-
-    template <typename T>
-    void demodulate() {
-        // Demodulate IQ for SSB
-
+        decRatio = receiver->getSampleRate() / Wave_SR;
+        screenPrinter->debug(instanceLog() + "SSBD Dec Ratio: " + std::to_string(decRatio));
         const size_t ssbd_in_size = ssbd->GetInSize();
 
-        std::vector<T> rawSamp(iq_len / decRatio, 0.0);
-
         while (!terminateFlag) {
-
-            // get IQ data
-            std::complex<T>* xc = iq_buffer.pop();
-
-            for (size_t n = 0; n < iq_len; n += ssbd_in_size) {
-                ssbd->Iterate(xc + n, rawSamp.data() + n / decRatio);
-            }
-
-            auto& decode_audio_buffer = decode_audio_ring_buffer.recs[decode_audio_ring_buffer.write_index];
-            decode_audio_buffer.write(rawSamp);
-        }
-    }
-
-    void sampleManager() {
-        while (!terminateFlag) {
-            waitForTime(digitalMode);
-            if (terminateFlag) {
-                return;
-            }
-            decode_audio_ring_buffer.wait_for_empty_slot();
-
-            if (terminateFlag) {
-                return;
-            }
-            decode_audio_ring_buffer.inc_write_index();
-
-            decode_audio_ring_buffer.recs[decode_audio_ring_buffer.write_index].clear();
-
-            decode_audio_ring_buffer.recs[decode_audio_ring_buffer.write_index].startEpochTime = std::chrono::system_clock::now().time_since_epoch() / std::chrono::seconds(1);
-            // wait at least 3 seconds so we don't double decode
-            std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-        }
-    }
-
-    void terminate() {
-        
-        decode_audio_ring_buffer.terminate();
-        iq_buffer.terminate();
-
-        terminateFlag = true;
-        
-        SM.Close();
-    }
-
-  
-    void readIQ() {
-
-        while (!terminateFlag) {
-
-            // wait for new data from receiver. Blocks until data received
-            SM.WaitForNewData();
-            if (terminateFlag) {
-                return;
-            }
-
-            // wait for a slot to be ready in the buffer. Blocks until slot available.
-            if (!iq_buffer.wait_for_empty_slot()) {
-                std::cout << "No slots available in IQ buffer!" << std::endl;
-                continue;
-            }
-
-            std::vector<std::complex<float>> iq_raw(iq_len);
-
-            // read block of data from receiver
-            const bool readSuccess = SM.Read((PBYTE)iq_raw.data(), (DWORD)iq_len * sizeof(std::complex<float>));
-
-            for (size_t k = 0; k < iq_len; ++k) {
-                iq_buffer.recs[iq_buffer.write_index][k] = iq_raw[k];
-            }
-
-            if (readSuccess) {
-                iq_buffer.inc_write_index();
-            }
-            else {
-                std::cout << "Did not read any I/Q data from shared memory" << std::endl;
-            }
-            
-        }
-    }
+            tw->report(twKey);
 
 
-    std::string getUTC(const uint8_t sec) const {
-        std::time_t t = std::time(nullptr);
-        std::tm* utc = std::gmtime(&t);
-        std::ostringstream ss;
+            try {
+                if (pred->load()) {
+                    pred->store(false);
+                    auto idx_next = af_buffer.get_next_write_index();
 
-        ss << std::setw(2) << std::setfill('0') << utc->tm_hour;
-        ss << std::setw(2) << std::setfill('0') << utc->tm_min;
-        ss << std::setw(2) << std::setfill('0') << sec;
+                    screenPrinter->debug(instanceLog() + "Next af buffer write index: " + std::to_string(idx_next));
 
-        return ss.str();
-    }
+                    memset(af_buffer.recs[idx_next].buf, 0.0f, af_buffer.recs[af_buffer.write_index].byte_size());
+                    af_buffer.recs[idx_next].reset();
+                    af_buffer.recs[idx_next].startEpochTime = std::chrono::system_clock::now().time_since_epoch() / std::chrono::seconds(1);
 
-    void waitForTimeWSPR() const {
-        screenPrinter->print("Waiting for WSPR interval", LOG_LEVEL::DEBUG);
-        SYSTEMTIME time;
-        while (!terminateFlag) {
-            GetSystemTime(&time);
-            const std::uint16_t min = static_cast<std::uint16_t>(time.wMinute);
-            if ((min & 1) == 0) { // if is even
-                if (time.wSecond == 0) {
-                    screenPrinter->print("Beginning WSPR interval...", LOG_LEVEL::DEBUG);
-                    return;
+                    af_buffer.inc_write_index();
+                    
+                    screenPrinter->debug(instanceLog() + "Getting an af buffer, read index=" + std::to_string(af_buffer.read_index));
+
+                    auto& current_af_buf = af_buffer.pop_ref();
+                    const auto startTime = current_af_buf.startEpochTime;
+                    screenPrinter->debug(instanceLog() + "Got an af buffer, size = " + std::to_string(current_af_buf.size) + " samples. start time=" + std::to_string(startTime));
+                    if (0 == startTime) {
+                        screenPrinter->debug(instanceLog() + "Discarding af buffer, start time is zero");
+                        continue; // begin demodulating next iteration
+                    }
+
+                    try {
+                        prepareAudio(current_af_buf, digitalMode);
+                    }
+                    catch (const std::exception& e) {
+                        screenPrinter->print(instanceLog() + "Caught exception in prepareAudio", e);
+                        continue;
+                    }
+                    //screenPrinter->debug(instanceLog() + "Audio prepared");
+
+                    std::vector<std::int16_t> audioBuf_i16(current_af_buf.size);
+                    for (std::size_t k = 0; k < current_af_buf.size; ++k) {
+                        audioBuf_i16[k] = static_cast<std::int16_t>(current_af_buf.buf[k] + 0.5f);
+                    }
+                    //screenPrinter->debug(instanceLog() + "Audio converted from float to i16");
+                    
+                    ItemToDecode toDecode(audioBuf_i16, digitalMode, startTime, ssbFreq, id);
+                    decoderPool->push(toDecode);
+
+                    screenPrinter->debug(instanceLog() + "Item pushed to decode queue");
+
+                    if (terminateFlag) { break; }
+
+                    ssbd = std::make_unique< SSBD<float> >(receiver->getSampleRate(), SSB_BW, static_cast<float>(demodFreq), USB);
+
                 }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-    }
 
-    void waitForTimeFT4() const {
-        screenPrinter->print("Waiting for FT4 interval", LOG_LEVEL::DEBUG);
-        SYSTEMTIME time;
-        while (!terminateFlag) {
-            GetSystemTime(&time);
-            switch (time.wSecond) {
-            case 0:
-            case 15:
-            case 30:
-            case 45:
-                screenPrinter->print("Beginning FT4 interval...", LOG_LEVEL::DEBUG);
-                return;
-            case 7:
-            case 22:
-            case 37:
-            case 52:
-                while (time.wMilliseconds < 475) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                    GetSystemTime(&time);
+                try {
+                    std::complex<float>* xc = iq_buffer->pop(iq_reader_id);
+                    if (af_buffer.recs[af_buffer.write_index].write_index + iq_len > af_buffer.recs[af_buffer.write_index].size - 1) {
+                        screenPrinter->err(instanceLog() + "af buffer full. size=" + std::to_string(af_buffer.recs[af_buffer.write_index].size) + " write_index=" + std::to_string(af_buffer.recs[af_buffer.write_index].write_index) + " new data size=" + std::to_string(iq_len));
+                        continue;
+                    }
+                    float* dest = af_buffer.recs[af_buffer.write_index].buf + af_buffer.recs[af_buffer.write_index].write_index;
+                    for (size_t n = 0; n < iq_len; n += ssbd_in_size) {
+                        ssbd->Iterate(xc + n, dest + n / decRatio);
+                    }
+                    af_buffer.recs[af_buffer.write_index].write_index += (iq_len / decRatio);
                 }
-                screenPrinter->print("Beginning FT4 interval...", LOG_LEVEL::DEBUG);
-                return;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-    }
+                catch (const std::exception& e) {
+                    screenPrinter->print(instanceLog() + "Caught exception in demodulation", e);
+                }
 
-    void waitForTimeFT8() {
-        screenPrinter->print("Waiting for FT8 interval", LOG_LEVEL::DEBUG);
-        while (!terminateFlag) {
-            std::time_t t = std::time(nullptr);
-            tm* ts = std::gmtime(&t);
-            const bool go = ts->tm_sec == 0 || ts->tm_sec == 15 || ts->tm_sec == 30 || ts->tm_sec == 45;
-            if (go) {
-                screenPrinter->print("Beginning FT8 interval...", LOG_LEVEL::DEBUG);
-                //screenPrinter->print("UTC:   " + std::put_time(ts, "%c %Z"), LOG_LEVEL::DEBUG);
-                return;
             }
-            else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            catch (const std::exception& e) {
+                screenPrinter->print(instanceLog() + "Caught exception in sampleManager(): ", e);
             }
         }
+        screenPrinter->debug(instanceLog() + "Sample manager thread terminating");
+        tw->threadFinished(twKey);
+
     }
 
-    void waitForTime(const std::string& digitalMode) {
-        if (digitalMode == "FT8") {
-            waitForTimeFT8();
+    void prepareAudio(sample_buffer_t<float>& audioBuffer, const std::string& mode) {
+        float maxVal = std::numeric_limits<float>::lowest();
+        for (size_t k = 0; k < audioBuffer.size; ++k) {
+            if (audioBuffer.buf[k] > maxVal) {
+                maxVal = audioBuffer.buf[k];
+            }
         }
-        else if (digitalMode == "FT4") {
-            waitForTimeFT4();
+        // parens prevent macro expansion, fix windows.h max definition collision
+        float minVal = (std::numeric_limits<float>::max)();
+
+        for (size_t k = 0; k < audioBuffer.size; ++k) {
+            if (audioBuffer.buf[k] < minVal) {
+                minVal = audioBuffer.buf[k];
+            }
         }
-        else if (digitalMode == "WSPR") {
-            waitForTimeWSPR();
+
+        if (std::fabs(minVal) > maxVal) {
+            maxVal = std::fabs(minVal);
         }
+
+        screenPrinter->debug(instanceLog() + "Maximum audio value: " + std::to_string(maxVal));
+
+        float factor = AUDIO_CLIP_VAL / (maxVal + 1.0f);
+        //screenPrinter->debug(instanceLog() + "AUDIO_CLIP_VAL="+std::to_string(AUDIO_CLIP_VAL));
+        //screenPrinter->debug(instanceLog() + "factor=" + std::to_string(factor));
+
+        if (mode == "WSPR") {
+            //screenPrinter->debug(instanceLog() + "applying WSPR factor=" + std::to_string(audioScaleFactor_wspr));
+
+            factor *= audioScaleFactor_wspr;
+        }
+        else {
+            //screenPrinter->debug(instanceLog() + "applying FT factor=" + std::to_string(audioScaleFactor_ft));
+
+            factor *= audioScaleFactor_ft;
+        }
+        //screenPrinter->debug(instanceLog() + "new factor=" + std::to_string(factor));
+
+        for (size_t k = 0; k < audioBuffer.size; ++k) {
+            audioBuffer.buf[k] *= factor;
+        }
+
+        screenPrinter->debug(instanceLog() + "Computed audio scale factor: " + std::to_string(factor));
+        screenPrinter->debug(instanceLog() + "New maximum audio value: " + std::to_string(factor * maxVal));
     }
 
-    ring_buffer_t<std::complex<float>*> iq_buffer;
+    std::string instanceLog() const {
+        const std::string s = "Instance " + std::to_string(id) + " ";
+        return s;
+    }
+
+    ring_buffer_spmc_t<std::complex<float>*>* iq_buffer;
+
+    ring_buffer_t< sample_buffer_t<float> > af_buffer;
     FrequencyHz ssbFreq;
-    ring_buffer_t< decode_audio_buffer_t<float> > decode_audio_ring_buffer;
-    std::thread readPipeThread;
-    std::string digitalMode;
-    int SMNumber;
-    CSharedMemory SM;
-    uint32_t radioSR;
-    SM_HDR* SHDR;
-    int32_t ssbBw;
-    double freqCal;
-    uint32_t decRatio;
-    uint32_t SSB_SR;
-    size_t iq_len;
-    uint32_t highestDecodeFreq;
-    std::string wavPath;
-    uint32_t waveSampleRate;
-    int decodedepth;
-    int numjt9threads;
+    FrequencyHz calibratedSSBFreq;
 
+    std::string digitalMode;
+    std::uint32_t decRatio;
+    std::uint32_t SSB_SR;
+    std::uint32_t waveSampleRate;
+    std::unique_ptr<SSBD<float>> ssbd;
     std::shared_ptr<ScreenPrinter> screenPrinter;
+
+    std::size_t iq_reader_id;
 
     std::atomic_bool terminateFlag;
 
-    std::thread iqThread;
-    std::thread demodThread;
     std::thread sampleManagerThread;
-    std::thread wavThread;
 
-    std::unique_ptr<SSBD<float>> ssbd;
-
-    std::shared_ptr<DecoderPool> decoderPool;
 
     float audioScaleFactor_ft;
     float audioScaleFactor_wspr;
+
+    std::shared_ptr<DecoderPool> decoderPool;
+
+    std::shared_ptr<std::atomic_bool> pred;
+
+    std::size_t id;
+
+    std::string smname;
+
+    std::shared_ptr<Receiver> receiver;
+
+    bool threadStarted;
+    std::uint64_t twKey;
+
 };

@@ -1,8 +1,15 @@
 #pragma once
 
+#ifdef __GNUC__
+#define PACK( __Declaration__ ) __Declaration__ __attribute__((__packed__))
+#endif
+
+#ifdef _MSC_VER
+#define PACK( __Declaration__ ) __pragma( pack(push, 1) ) __Declaration__ __pragma( pack(pop))
+#endif
 
 // Complete WAV file header
-struct WavHdr
+PACK(struct WavHdr
 {
     char  _RIFF[4]; // "RIFF"
     std::uint32_t FileLen;  // length of all data after this (FileLength - 8)
@@ -18,25 +25,32 @@ struct WavHdr
     char  _data[4];  // "data"
     DWORD DataLen;   // length of the next data (FileLength - sizeof(struct WavHdr))
 
-};
+});
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Open wav file
-HANDLE wavOpen(const std::string& filename, WavHdr& Hdr)
+HANDLE wavOpen(const std::string& filename, WavHdr& Hdr, const bool isTemp)
 {
     LPCVOID h;
     DWORD hl, l;
 
     HANDLE File = INVALID_HANDLE_VALUE;
 
-    // std::cout << "Creating wav file: " << filename << std::endl;
-    // open the file
-    File = ::CreateFile(filename.c_str(), GENERIC_WRITE | GENERIC_READ,
-        FILE_SHARE_READ, NULL, CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL | FILE_FLAG_RANDOM_ACCESS,
-        NULL
-    );
+    if (isTemp) {
+        File = ::CreateFile(filename.c_str(), GENERIC_WRITE | GENERIC_READ,
+            FILE_SHARE_READ , NULL, CREATE_ALWAYS,
+            FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_SEQUENTIAL_SCAN,
+            NULL
+        );
+    }
+    else {
+        File = ::CreateFile(filename.c_str(), GENERIC_WRITE | GENERIC_READ,
+            FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+            NULL
+        );
+    }
 
     if (File == INVALID_HANDLE_VALUE) {
         return File;
@@ -61,16 +75,4 @@ HANDLE wavOpen(const std::string& filename, WavHdr& Hdr)
 
     // success
     return File;
-}
-
-
-//////////////////////////////////////////////////////////////////////////////////////////////
-// Close wav file
-void wavClose(HANDLE& File)
-{
-    // close the file
-    ::CloseHandle(File);
-
-    // invalidate handle
-    File = INVALID_HANDLE_VALUE;
 }

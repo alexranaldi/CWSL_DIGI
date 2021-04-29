@@ -54,7 +54,6 @@ namespace wspr {
         std::int16_t drift;
         std::uint32_t recvfreq;
         std::int16_t dbm;
-
     };
 }
 
@@ -87,11 +86,13 @@ public:
         target.sin_addr.s_addr = inet_addr(SERVER_IP.c_str());
 
         mSendThread = std::thread(&WSPRNet::processingLoop, this);
+        SetThreadPriority(mSendThread.native_handle(), THREAD_PRIORITY_IDLE);
         mSendThread.detach();
         return true;
     }
 
     void terminate() {
+        screenPrinter->debug("WSPRNet interface terminating");
         terminateFlag = true;
     }
 
@@ -309,8 +310,8 @@ public:
 
     std::string readMessage() {
         int received = 0;
-        std::string message;
-        int bytes;
+        std::string message = "";
+        int bytes = 0;
         do {
             char buf[8192] = {0};
             bytes = recv(mSocket, buf, 8192, NULL);
@@ -333,7 +334,7 @@ public:
             if (!success) {
                 screenPrinter->err("Failed to send WSPR report to WSPRNet");
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(800));
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
             if (terminateFlag) { return; }
         }
     }

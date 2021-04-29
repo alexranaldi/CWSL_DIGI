@@ -46,12 +46,15 @@ along with CWSL_DIGI.If not, see < https://www.gnu.org/licenses/>.
 #include <algorithm> 
 #include <cctype>
 #include <locale>
+#include <unordered_map>
 
 #  pragma comment(lib, "Ws2_32.lib")
 
 #include "../Utils/SharedMemory.h"
 
 #include "Instance.hpp"
+#include "Receiver.hpp"
+#include "Stats.hpp"
 
 #include "PSKReporter.hpp"
 #include "RBNHandler.hpp"
@@ -60,17 +63,17 @@ along with CWSL_DIGI.If not, see < https://www.gnu.org/licenses/>.
 #include "boost/program_options.hpp"
 
 #include "ScreenPrinter.hpp"
-
-std::atomic_bool terminateFlag;
+#include "OutputHandler.hpp"
 
 std::string badMessageLogFile = "";
-
 
 std::string decodesFileName;
 
 std::shared_ptr<pskreporter::PSKReporter> reporter;
 std::shared_ptr<RBNHandler> rbn;
 std::shared_ptr<WSPRNet> wsprNet;
+
+std::unordered_map<std::string, std::shared_ptr<Receiver>> receivers; 
 
 bool usePSKReporter = false;
 bool useRBN = false;
@@ -79,11 +82,75 @@ bool useWSPRNet = false;
 std::string operatorCallsign = "";
 std::string operatorLocator = "";
 
-
 std::vector<std::unique_ptr<Instance>> instances;
 
 std::shared_ptr<DecoderPool> decoderPool;
 std::shared_ptr<OutputHandler> outputHandler;
+std::shared_ptr<ScreenPrinter> printer;
+std::shared_ptr<Stats> statsHandler;
+
+
+void cleanup() {
+    for (size_t k = 0; k < instances.size(); ++k) {
+        instances[k]->terminate();
+    }
+    decoderPool->terminate();
+    if (reporter) { reporter->terminate(); }
+    if (wsprNet) { wsprNet->terminate(); }
+    if (rbn) { rbn->terminate(); }
+    syncThreadTerminateFlag = true;
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+    // terminate screen printer last so it can log any useful messages
+    printer->terminate();
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+}
+
+void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrinter> printer, std::vector<std::unique_ptr<Instance>>& instances, const int reportingInterval, const std::uint64_t twKey) {
+    tw->threadStarted(twKey);
+    while (!syncThreadTerminateFlag) {
+        for (int k = 0; k < reportingInterval * 5; ++k) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            tw->report(twKey);
+        }
+
+        try {
+            statsHandler->process();
+        }
+        catch (const std::exception& e) {
+            printer->print(e);
+            continue;
+        }
+        tw->report(twKey);
+
+        try {
+            auto v1Min = statsHandler->getCounts(60, printer);
+            tw->report(twKey);
+            auto v5Min = statsHandler->getCounts(300, printer);
+            tw->report(twKey);
+            auto v1Hr = statsHandler->getCounts(3600, printer);
+            tw->report(twKey);
+            auto v24Hr = statsHandler->getCounts(86400, printer);
+            tw->report(twKey);
+            std::stringstream hdr;
+            hdr << std::setfill(' ') << std::left << std::setw(10) << "Instance" << std::setw(12) << "Frequency" << std::setw(8) << "Mode" << std::setw(8) << "24 Hour" << std::setw(8) << "1 Hour" << std::setw(8) << "5 Min" << std::setw(8) << "1 Min";
+            printer->print(hdr.str());
+            for (std::size_t k = 0; k < instances.size(); ++k) {
+                const auto mode = instances[k]->getMode();
+                std::stringstream s;
+                s << std::setfill(' ') << std::left << std::setw(10) << std::to_string(k) << std::setw(12) << std::to_string(instances[k]->getFrequency()) << std::setw(8) << mode << std::setw(8) << std::to_string(v24Hr[k]) << std::setw(8) << std::to_string(v1Hr[k]) << std::setw(8) << std::to_string(v5Min[k]) << std::setw(8) << std::to_string(v1Min[k]);
+                printer->print(s.str());
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print(e);
+            continue;
+        }
+        tw->report(twKey);
+    }
+    tw->threadFinished(twKey);
+
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Main function
@@ -92,6 +159,9 @@ int main(int argc, char **argv)
     std::cout << PROGRAM_NAME + " " + PROGRAM_VERSION << " by W2AXR" << std::endl;
     std::cout << "License:  GNU GENERAL PUBLIC LICENSE, Version 3" << std::endl;
     std::cout << "Please run " + PROGRAM_NAME + " --help for syntax" << std::endl;
+    std::cout << "Press CONTROL + C to terminate" << std::endl;
+
+    std::this_thread::sleep_for(std::chrono::seconds(3));
 
     namespace po = boost::program_options;
 
@@ -99,6 +169,7 @@ int main(int argc, char **argv)
     desc.add_options()
         ("help", "produce help message")
         ("configfile", po::value<std::string>(), "path and file name of configuration file")
+        ("restartinterval", po::value<int>(), "how often to restart decoder instances in seconds")
         ("decoders.decoder", po::value<std::vector<std::string>>()->multitoken(), "freq, mode, shmem, freqcal")
         ("radio.freqcalibration", po::value<double>(), "frequency calibration factor in PPM, default 1.0000000000")
         ("radio.sharedmem", po::value<int>(), "CWSL shared memory interface number to use, default -1")
@@ -110,22 +181,26 @@ int main(int argc, char **argv)
         ("operator.callsign", po::value<std::string>(), "operator callsign - required")
         ("operator.gridsquare", po::value<std::string>(), "operator grid square locator - required")
         ("wsjtx.decoderburden", po::value<float>(), "adds extra JT9 and WSPRD instances for decoding. default 1.0")
-        ("wsjtx.keepwav", "keep generated wav files rather than delete them, default false")
-        ("wsjtx.numjt9instances", po::value<int>(), "maximum number of simultaneous JT9.exe instances, default is 0.3*number of decoders")
+        ("wsjtx.keepwav", po::value<bool>(), "keep generated wav files rather than delete them, default false")
+        ("wsjtx.numjt9instances", po::value<int>(), "maximum number of simultaneous JT9.exe instances, default is computed")
+        ("wsjtx.maxwsprdinstances", po::value<int>(), "maximum number of simultaneous WSPRD.exe instances, default is computed")
         ("wsjtx.numjt9threads", po::value<int>(), "number of threads used by each jt9 instance. default 3")
         ("wsjtx.highestdecodefreq", po::value<int>(), "highest freq to decode, default 3000")
         ("wsjtx.decodedepth", po::value<int>(), "decode depth passed to jt9.exe. must be 1, 2 or 3. default 3")
-        ("wsjtx.temppath", po::value<std::string>(), "temporary file path for writing wave files - required")
+        ("wsjtx.temppath", po::value<std::string>(), "temporary file path for writing wave files")
         ("wsjtx.binpath", po::value<std::string>(), "WSJT-X bin folder path - required")
         ("wsjtx.ftaudioscalefactor", po::value<float>(), "FT4 and FT8 audio scale factor, default 0.90")
         ("wsjtx.wspraudioscalefactor", po::value<float>(), "WSPR audio scale factor, default 0.20")
         ("wsjtx.maxdataage", po::value<int>(), "Max data age, factor of mode duration. default 10")
         ("wsjtx.wsprcycles", po::value<int>(), "WSPR decoder cycles per bit. default 3000")
+        ("wsjtx.transfermethod", po::value<std::string>(), "either wavfile or shmem, default shmem")
+        ("logging.statsreportinginterval", po::value<int>(), "how often to report decoder statistics in seconds, default 300")
         ("logging.decodesfile", po::value<std::string>(), "file name for decode text log")
         ("logging.printreports", po::value<bool>(), "prints each handled report, default true")
         ("logging.printjt9output", po::value<bool>(), "prints output of JT9.exe, default false")
         ("logging.loglevel", po::value<int>(), "logging level, 5 is most verbose, 0 is nothing, 8 is everything, default is 3")
         ("logging.badmsglog", po::value<std::string>(), "path to log file for writing unhandled messages")
+        ("logging.logimmediately", po::value<bool>(), "if true, logging is done immediately, otherwise buffered. default is false")
         ("logging.logfile", po::value<std::string>(), "log file, mirrors console output");
 
     po::variables_map vm;
@@ -155,6 +230,16 @@ int main(int argc, char **argv)
 
     // Parse Logging Options
 
+    bool logImmediately = false;
+    if (vm.count("logging.logimmediately")) {
+        logImmediately = vm["logging.logimmediately"].as<bool>();
+    }
+    if (logImmediately) {
+        std::cout << "Immediate logging enabled" << std::endl;
+    }
+
+    printer = std::make_shared<ScreenPrinter>(logImmediately);
+
     std::string logFileName = "";
 
     int logLevel = static_cast<int>(LOG_LEVEL::INFO);
@@ -162,7 +247,6 @@ int main(int argc, char **argv)
         logLevel = vm["logging.loglevel"].as<int>();
     }
 
-    std::shared_ptr<ScreenPrinter> printer = std::make_shared<ScreenPrinter>();
     printer->setLogLevel(logLevel);
 
     if (vm.count("logging.logfile")) {
@@ -192,19 +276,25 @@ int main(int argc, char **argv)
         decodesFileName = "";
     }
 
+    int statsReportingInterval = 300;
+    if (vm.count("logging.statsreportinginterval")) {
+        statsReportingInterval = vm["logging.statsreportinginterval"].as<int>();
+    }
+    printer->print("Statistics reporting interval: " + std::to_string(statsReportingInterval) + " sec");
+
+
     // Parse radio settings
 
     int SMNumber = -1;
     if (vm.count("radio.sharedmem")) {
         SMNumber = vm["radio.sharedmem"].as<int>();
-        std::cout << "Using the specified CWSL shared memory interface number: " << SMNumber << std::endl;
+        printer->print("Using the specified CWSL shared memory interface number: " + std::to_string(SMNumber));
     }
 
-    double freqCal = 1.0;
+    double freqCalGlobal = 1.0;
     if (vm.count("radio.freqcalibration")) {
-        freqCal = vm["radio.freqcalibration"].as<double>();
-        std::cout.precision(std::numeric_limits<double>::max_digits10);
-        std::cout << "Frequency Calibration Factor: " << freqCal << std::endl;
+        freqCalGlobal = vm["radio.freqcalibration"].as<double>();
+        printer->print("Frequency Calibration Factor: " + std::to_string(freqCalGlobal));
     }
 
     // Parse decoders
@@ -212,6 +302,7 @@ int main(int argc, char **argv)
     int numFT4Decoders = 0;
     int numFT8Decoders = 0;
     int numWSPRDecoders = 0;
+    int numQ65_30Decoders = 0;
 
     using Decoder = std::tuple<std::uint32_t, std::string, int, double>;
     using DecoderVec = std::vector<Decoder>;
@@ -219,12 +310,13 @@ int main(int argc, char **argv)
 
     if (vm.count("decoders.decoder")) {
         std::vector<std::string> decodersRawVec = vm["decoders.decoder"].as<std::vector<std::string>>();
-        std::cout << "Found " << decodersRawVec.size() << " decoder entries" << std::endl;
+        printer->print("Found " + std::to_string(decodersRawVec.size()) + " decoder entries");
         for (size_t k = 0; k < decodersRawVec.size(); k++) {
             const std::string& rawLine = decodersRawVec[k];
             auto decoderVecLine = splitStringByDelim(rawLine, ' ');
             if (decoderVecLine.size() != 2 && decoderVecLine.size() != 3 && decoderVecLine.size() != 4) {
-                std::cerr << "Error parsing decoder line: " << rawLine << std::endl;
+                printer->err("Error parsing decoder line: " + rawLine);
+                cleanup();
                 return EXIT_FAILURE;
             }
             const uint32_t freq = std::stoi(decoderVecLine[0]);
@@ -238,8 +330,12 @@ int main(int argc, char **argv)
             else if (mode == "WSPR") {
                 numWSPRDecoders++;
             }
+            else if (mode == "Q65-30") {
+                numQ65_30Decoders++;
+            }
             else {
-                std::cerr << "Error parsing decoder line, unknown mode! Line: " << rawLine << std::endl;
+                printer->err("Error parsing decoder line, unknown mode! Line: " + rawLine);
+                cleanup();
                 return EXIT_FAILURE;
             }
             int smnum = SMNumber;
@@ -255,7 +351,8 @@ int main(int argc, char **argv)
         }
     }
     else {
-        std::cerr << "decoders.decoder input is required but was not specified!" << std::endl;
+        printer->err("decoders.decoder input is required but was not specified!");
+        cleanup();
         return EXIT_FAILURE;
     }
 
@@ -265,7 +362,8 @@ int main(int argc, char **argv)
     if (vm.count("wsjtx.numjt9instances")) {
         numJT9Instances = vm["wsjtx.numjt9instances"].as<int>();
         if (numJT9Instances < 1) {
-            std::cout << "wsjtx.numjt9instances must be >= 1" << std::endl;
+            printer->err("wsjtx.numjt9instances must be >= 1");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
@@ -273,15 +371,32 @@ int main(int argc, char **argv)
         float decoderburden = 1;
         if (vm.count("wsjtx.decoderburden")) {
             decoderburden = vm["wsjtx.decoderburden"].as<float>();
-            std::cout << "Decoder Burden specified as: " << decoderburden << std::endl;
+            printer->print("Decoder Burden specified as: " + std::to_string(decoderburden));
         }
-        const float nd1 = static_cast<float>(numFT4Decoders + numFT8Decoders) * 0.20f;
-        const float nd2 = static_cast<float>(numWSPRDecoders) * 0.35f;
+        const float nd1 = static_cast<float>(numFT4Decoders + numFT8Decoders + numQ65_30Decoders) * (1.0f/5.0f); // 1 per 5 ft4/ft8/Q65
+        const float nd2 = static_cast<float>(numWSPRDecoders) * (1.0f/3.0f); // 1 per 3 wspr
         const float nInstf = (nd1 + nd2) * decoderburden;
         numJT9Instances = static_cast<int>(std::round(nInstf + 0.55f));
     }
+    printer->print("Maximum number of simultaneous jt9.exe and wsprd.exe instances: " + std::to_string(numJT9Instances));
 
-    std::cout << "Maximum number of simultaneous jt9.exe/wsprd.exe instances: " << numJT9Instances << std::endl;
+    int maxWSPRDInstances = 0;
+    if (vm.count("wsjtx.maxwsprdinstances")) {
+        maxWSPRDInstances = vm["wsjtx.maxwsprdinstances"].as<int>();
+        if (maxWSPRDInstances < 1) {
+            printer->err("wsjtx.maxwsprdinstances must be >= 1");
+            cleanup();
+            return EXIT_FAILURE;
+        }
+    }
+    else {
+        maxWSPRDInstances = static_cast<int>(std::round(static_cast<double>(numJT9Instances) * (static_cast<double>(numWSPRDecoders) / static_cast<double>(decoders.size())) ));
+        if (maxWSPRDInstances < 1 && numWSPRDecoders) {
+            maxWSPRDInstances = 1;
+        }
+    }
+
+    printer->print("Maximum number of simultaneous wsprd.exe instances: " + std::to_string(maxWSPRDInstances));
 
     int highestDecodeFreq = 3000;
     if (vm.count("wsjtx.highestdecodefreq")) {
@@ -290,53 +405,59 @@ int main(int argc, char **argv)
     if (highestDecodeFreq > SSB_BW) {
         highestDecodeFreq = SSB_BW;
     }
-    std::cout << "Decoding up to " << highestDecodeFreq << " Hz" << std::endl;
+    printer->print("Decoding up to " + std::to_string(highestDecodeFreq) + " Hz");
 
     std::string wavPath = "";
     if (vm.count("wsjtx.temppath")) {
         wavPath = vm["wsjtx.temppath"].as<std::string>();
     }
     else {
-        std::cerr << "Missing wsjtx.temppath input argument!" << std::endl;
-        return EXIT_FAILURE;
+        char buf[MAX_PATH] = {0};
+        GetTempPathA(MAX_PATH, buf);
+        std::string s(buf);
+        wavPath = buf;
     }
-    std::cout << "Using temporary path for wav files: " << wavPath << std::endl;
+    printer->print("Using path for wav files: " + wavPath);
 
     std::string binPath = "";
     if (vm.count("wsjtx.binpath")) {
         binPath = vm["wsjtx.binpath"].as<std::string>();
     }
     else {
-        std::cerr << "Missing wsjtx.binpath input argument!" << std::endl;
+        printer->err("Missing wsjtx.binpath input argument!");
+        cleanup();
         return EXIT_FAILURE;
     }
 
     bool keepWavFiles = false;
     if (vm.count("wsjtx.keepwav")) {
-        keepWavFiles = true;
+        keepWavFiles = vm["wsjtx.keepwav"].as<bool>();
     }
 
     int decodedepth = 3;
     if (vm.count("wsjtx.decodedepth")) {
         decodedepth = vm["wsjtx.decodedepth"].as<int>();
         if (decodedepth > 3) {
-            std::cerr << "wsjtx.decodedepth is too high, setting to 3" << std::endl;
+            printer->err("wsjtx.decodedepth is too high, setting to 3");
             decodedepth = 3;
         }
         else if (decodedepth < 1) {
-            std::cerr << "wsjtx.decodedepth is too small, setting to 1" << std::endl;
+            printer->err("wsjtx.decodedepth is too small, setting to 1");
             decodedepth = 1;
         }
     }
+
     float ftAudioScaleFactor = 0.90f;
     if (vm.count("wsjtx.ftaudioscalefactor")) {
         ftAudioScaleFactor = vm["wsjtx.ftaudioscalefactor"].as<float>();
         if (ftAudioScaleFactor > 1.0f) {
-            std::cerr << "ftaudioscalefactor must be <= 1.0" << std::endl;
+            printer->err("ftaudioscalefactor must be <= 1.0");
+            cleanup();
             return EXIT_FAILURE;
         }
-        else if (ftAudioScaleFactor < 0.0f) {
-            std::cerr << "ftaudioscalefactor must be > 0" << std::endl;
+        else if (ftAudioScaleFactor <= 0.0f) {
+            printer->err("ftaudioscalefactor must be > 0");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
@@ -345,11 +466,13 @@ int main(int argc, char **argv)
     if (vm.count("wsjtx.wspraudioscalefactor")) {
         wsprAudioScaleFactor = vm["wsjtx.wspraudioscalefactor"].as<float>();
         if (wsprAudioScaleFactor > 1.0f) {
-            std::cerr << "wsjtx.wspraudioscalefactor must be <= 1.0" << std::endl;
+            printer->err("wsjtx.wspraudioscalefactor must be <= 1.0");
+            cleanup();
             return EXIT_FAILURE;
         }
-        else if (wsprAudioScaleFactor < 0.0f) {
-            std::cerr << "wsjtx.wspraudioscalefactor must be > 0" << std::endl;
+        else if (wsprAudioScaleFactor <= 0.0f) {
+            printer->err("wsjtx.wspraudioscalefactor must be > 0");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
@@ -358,11 +481,13 @@ int main(int argc, char **argv)
     if (vm.count("wsjtx.maxdataage")) {
         maxDataAge = vm["wsjtx.maxdataage"].as<int>();
         if (maxDataAge > 100) {
-            std::cerr << "wsjtx.maxdataage must be <= 100" << std::endl;
+            printer->err("wsjtx.maxdataage must be <= 100");
+            cleanup();
             return EXIT_FAILURE;
         }
         else if (maxDataAge < 2) {
-            std::cerr << "wsjtx.maxdataage must be >= 2" << std::endl;
+            printer->err("wsjtx.maxdataage must be >= 2");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
@@ -371,11 +496,13 @@ int main(int argc, char **argv)
     if (vm.count("wsjtx.wsprcycles")) {
         wsprCycles = vm["wsjtx.wsprcycles"].as<int>();
         if (wsprCycles > 10000) {
-            std::cerr << "wsjtx.wsprcycles must be <= 10000" << std::endl;
+            printer->err("wsjtx.wsprcycles must be <= 10000");
+            cleanup();
             return EXIT_FAILURE;
         }
         else if (wsprCycles < 100) {
-            std::cerr << "wsjtx.wsprcycles must be >= 100" << std::endl;
+            printer->err("wsjtx.wsprcycles must be >= 100");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
@@ -384,14 +511,26 @@ int main(int argc, char **argv)
     if (vm.count("wsjtx.numjt9threads")) {
         numjt9threads = vm["wsjtx.numjt9threads"].as<int>();
         if (numjt9threads > 9) {
-            std::cerr << "wsjtx.numjt9threads is too high, setting to 9" << std::endl;
+            printer->err("wsjtx.numjt9threads is too high, setting to 9");
             numjt9threads = 9;
         }
         else if (numjt9threads < 1) {
-            std::cerr << "wsjtx.numjt9threads is too small, setting to 1" << std::endl;
+            printer->err("wsjtx.numjt9threads is too small, setting to 1");
             numjt9threads = 1;
         }
     }
+
+    std::string transferMethod = "wavefile";
+    if (vm.count("wsjtx.transfermethod")) {
+        transferMethod = vm["wsjtx.transfermethod"].as<std::string>();
+        if (transferMethod != "shmem" && transferMethod != "wavefile") {
+            printer->err("wsjtx.transfermethod must be wavefile or shmem");
+            cleanup();
+            return EXIT_FAILURE;
+        }
+    }
+
+    printer->debug("Using transfer method: " + transferMethod);
 
     // Parse reporting options
 
@@ -410,7 +549,8 @@ int main(int argc, char **argv)
         useRBN = vm["reporting.rbn"].as<bool>();
         if (useRBN) {
             if (!vm.count("reporting.aggregatorport")) {
-                std::cerr << "reporting.rbn option also requires reporting.aggregatorport" << std::endl;
+                printer->err("reporting.rbn option also requires reporting.aggregatorport");
+                cleanup();
                 return EXIT_FAILURE;
             }
             rbnPort = vm["reporting.aggregatorport"].as<int>();
@@ -427,7 +567,8 @@ int main(int argc, char **argv)
     }
     else {
         if (usePSKReporter) {
-            std::cout << "Missing operator.callsign input argument!" << std::endl;
+            printer->err("Missing operator.callsign input argument!");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
@@ -436,44 +577,59 @@ int main(int argc, char **argv)
     }
     else {
         if (usePSKReporter) {
-            std::cout << "Missing operator.gridsquare input argument!" << std::endl;
+            printer->print("Missing operator.gridsquare input argument!");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
+    
+    int restartInterval = 0; 
+    if (vm.count("restartinterval")) {
+        restartInterval = vm["restartinterval"].as<int>();
+    }
 
-    //std::cout << "initializing output handler" << std::endl;
+    tw = std::make_shared<ThreadWatcher>();
 
-    outputHandler = std::make_shared<OutputHandler>(printHandledReports, badMessageLogFile, decodesFileName, printer);
-    //std::cout << "initializing decoder pool" << std::endl;
+    statsHandler = std::make_shared<Stats>(86400, static_cast<std::uint32_t>(decoders.size()));
 
-    decoderPool = std::make_shared<DecoderPool>(keepWavFiles, printJT9Output, numJT9Instances, numjt9threads, decodedepth, wsprCycles, highestDecodeFreq, binPath, maxDataAge, printer, outputHandler);
+    outputHandler = std::make_shared<OutputHandler>(printHandledReports, badMessageLogFile, decodesFileName, printer, statsHandler);
+
+    decoderPool = std::make_shared<DecoderPool>(transferMethod, keepWavFiles, printJT9Output, numJT9Instances, maxWSPRDInstances, numjt9threads, decodedepth, wsprCycles, highestDecodeFreq, binPath, maxDataAge, wavPath, printer, outputHandler);
+    const bool decStat = decoderPool->init();
+    if (!decStat) {
+        cleanup();
+        return EXIT_FAILURE;
+    }
 
     if (usePSKReporter) {
-        std::cout << "Initializing PSKReporter interface" << std::endl;
+        printer->print("Initializing PSKReporter interface");
         reporter = std::make_shared<pskreporter::PSKReporter>();
         const bool res = reporter->init(operatorCallsign, operatorLocator, PROGRAM_NAME + " " + PROGRAM_VERSION, printer);
         if (!res) {
-            std::cerr << "Failed to initialize PSKReporter!" << std::endl;
+            printer->err("Failed to initialize PSKReporter!"); 
+            cleanup();
             return EXIT_FAILURE;
         }
     }
 
     if (useWSPRNet) {
-        std::cout << "Initializing WSPRNet interface" << std::endl;
+        printer->print("Initializing WSPRNet interface");
         wsprNet = std::make_shared<WSPRNet>(operatorCallsign, operatorLocator, printer);
         const bool res = wsprNet->init();
         if (!res) {
-            std::cerr << "Failed to initialize WSPRNet!" << std::endl;
+            printer->err("Failed to initialize WSPRNet!");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
 
     if (useRBN) {
-        std::cout << "Initializing RBN Aggregator interface" << std::endl;
+        printer->print("Initializing RBN Aggregator interface");
         rbn = std::make_shared<RBNHandler>();
         const bool res = rbn->init(operatorCallsign, operatorLocator, PROGRAM_NAME + " " + PROGRAM_VERSION, rbnIpAddr, rbnPort);
         if (!res) {
-            std::cerr << "Failed to initialize RBN Aggregator interface!" << std::endl;
+            printer->err("Failed to initialize RBN Aggregator interface!");
+            cleanup();
             return EXIT_FAILURE;
         }
     }
@@ -488,81 +644,195 @@ int main(int argc, char **argv)
         outputHandler->setRBNHandler(rbn);
     }
 
+
+    // create time signalling threads
+    SyncPredicates ft8Preds(numFT8Decoders);
+    std::thread ft8SignalThread;
+    if (numFT8Decoders) {
+        const auto twKey = tw->addThread("ft8SignalThread");
+        ft8SignalThread = std::thread(&waitForTimeFT8, printer, std::ref(ft8Preds), twKey);
+        ft8SignalThread.detach();
+    }
+    SyncPredicates ft4Preds(numFT4Decoders);
+    std::thread ft4SignalThread;
+    if (numFT4Decoders) {
+        const auto twKey = tw->addThread("ft4SignalThread");
+        ft4SignalThread = std::thread(&waitForTimeFT4, printer, std::ref(ft4Preds), twKey);
+        ft4SignalThread.detach();
+    }
+    SyncPredicates wsprPreds(numWSPRDecoders);
+    std::thread wsprSignalThread;
+    if (numWSPRDecoders) {
+        const auto twKey = tw->addThread("wsprSignalThread");
+        wsprSignalThread = std::thread(&waitForTimeWSPR, printer,  std::ref(wsprPreds), twKey);
+        wsprSignalThread.detach();
+    }
+    SyncPredicates q65_30Preds(numQ65_30Decoders);
+    std::thread q65_30SignalThread;
+    if (numQ65_30Decoders) {
+        const auto twKey = tw->addThread("q65_30SignalThread");
+        q65_30SignalThread = std::thread(&waitForTimeQ65_30, printer, std::ref(q65_30Preds), twKey);
+        q65_30SignalThread.detach();
+    }
+
     // USB/LSB.  USB = 1, LSB = 0
     constexpr int USB = 1;
 
-    for (size_t k = 0; k < decoders.size(); ++k) {
-        auto decoder = decoders[k];
-        auto f = std::get<0>(decoder);
-        auto mode = std::get<1>(decoder);
-        auto smnum = std::get<2>(decoder);
-        auto d_freqcal = std::get<3>(decoder);
+    int ft8PredIndex = 0;
+    int ft4PredIndex = 0;
+    int wsprPredIndex = 0;
+    int q65_30PredIndex = 0;
 
-        if (mode != "FT8" && mode != "FT4" && mode != "WSPR") {
-            std::cerr << "Unknown mode specified: " << mode << std::endl;
+    for (size_t k = 0; k < decoders.size(); ++k) {
+        const auto& decoder = decoders[k];
+        const auto& f = std::get<0>(decoder);
+        const auto& mode = std::get<1>(decoder);
+        const auto& smnum = std::get<2>(decoder);
+        const auto& d_freqcal = std::get<3>(decoder);
+
+        if (mode != "FT8" && mode != "FT4" && mode != "WSPR" && mode != "Q65-30") {
+            printer->err("Unknown mode specified: " + mode);
+            cleanup();
             return EXIT_FAILURE;
         }
 
-        printer->print("Creating Instance " + std::to_string(k + 1) +
-            " of " + std::to_string(decoders.size()) + " for frequency " + 
+        const FrequencyHz instanceFreqCalibrated = static_cast<FrequencyHz>(f / (freqCalGlobal * d_freqcal));
+        printer->debug("Calibrated instance frequency: " + std::to_string(instanceFreqCalibrated));
+
+        const int nMem = findBand(static_cast<std::int64_t>(instanceFreqCalibrated), smnum);
+        if (-1 == nMem) {
+            printer->err("Unable to open CWSL shared memory at the specified frequency. Bad frequency or sharedmem specified.");
+            printer->err("Note that frequency calibration may shift the expected frequency outside of what is expected!");
+            cleanup();
+            return EXIT_FAILURE;
+        }
+        const std::string smname = createSharedMemName(nMem, smnum);
+        std::shared_ptr<Receiver> receiver = nullptr;
+        auto it = receivers.find(smname);
+        if (it != receivers.end()) {
+            printer->debug("Using existing receiver interface");
+            receiver = it->second;
+        }
+        else {
+            printer->debug("Creating receiver interface");
+            receivers.emplace(smname, std::make_shared<Receiver>(
+                k,
+                smname,
+                printer
+                ));
+            receiver = receivers[smname];
+            receiver->init();
+        }
+
+        printer->print("Creating Instance " + std::to_string(k) +
+            " of " + std::to_string(decoders.size()-1) + " for frequency " + 
             std::to_string(f) + " mode " + mode, LOG_LEVEL::INFO);
 
-        std::unique_ptr<Instance> instance = std::make_unique<Instance>();
-        instances.push_back(std::move(instance));
-        printer->print("Initializing instance " + std::to_string(k + 1) + " of " + std::to_string(decoders.size()), LOG_LEVEL::DEBUG);
-        const bool status = instances.back()->init(
-            f, 
-            smnum, 
-            mode, 
-            SSB_BW, 
-            freqCal * d_freqcal, // global freq cal * decoder freq cal 
-            highestDecodeFreq, 
-            wavPath, 
-            Wave_SR, 
-            decodedepth, 
-            numjt9threads, 
+        std::shared_ptr<std::atomic_bool> pred = nullptr;
+        if (mode == "FT8") {
+            pred = ft8Preds.preds[ft8PredIndex];
+            ft8PredIndex++;
+        }
+        else if (mode == "FT4") {
+            pred = ft4Preds.preds[ft4PredIndex];
+            ft4PredIndex++;
+        }
+        else if (mode == "WSPR") {
+            pred = wsprPreds.preds[wsprPredIndex];
+            wsprPredIndex++;
+        }
+        else if (mode == "Q65-30") {
+            pred = q65_30Preds.preds[q65_30PredIndex];
+            q65_30PredIndex++;
+        }
+        else {
+            printer->err("Unhandled mode: " + mode);
+            cleanup();
+            return EXIT_FAILURE;
+        }
+
+        std::unique_ptr<Instance> instance = std::make_unique<Instance>(
+            receiver,
+            k,
+            pred,
+            f,
+            instanceFreqCalibrated,
+            mode,
+            Wave_SR,
             ftAudioScaleFactor, 
-            wsprAudioScaleFactor, 
-            printer, 
-            decoderPool);
-        if (!status) {
-            std::cerr << "Failed to initialize decoder instance!" << std::endl;
+            wsprAudioScaleFactor,
+            printer,
+            decoderPool
+        );
+
+        instances.push_back(std::move(instance));
+
+        printer->print("Initializing instance " + std::to_string(k + 1) + " of " + std::to_string(decoders.size()), LOG_LEVEL::DEBUG);
+        try {
+            const bool status = instances.back()->init();
+            if (!status) {
+                printer->err("Failed to initialize decoder instance");
+                cleanup();
+                return EXIT_FAILURE;
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print(e);
+            cleanup();
             return EXIT_FAILURE;
         }
     }
+
+    const std::uint64_t statstwKey = tw->addThread("reportStats");
+    std::thread statsThread = std::thread(&reportStats, std::ref(statsHandler), printer, std::ref(instances), statsReportingInterval, statstwKey);
+    SetThreadPriority(statsThread.native_handle(), THREAD_PRIORITY_IDLE);
+    tw->setAllowedDelta(statstwKey, 5000);
+    statsThread.detach();
+    tw->threadStarted(statstwKey); // this thread can be slow to start, so report it as started here as well as in the thread itself
 
     //
     //  Main Loop
     //
 
-    std::cout << std::endl << "Main loop started! Press Q to terminate." << std::endl;
-    terminateFlag = false;
-    while (!terminateFlag) {
-        // Was Exit requested?
-        if (_kbhit()) {
-            const char ch = _getch();
-            if (ch == 'Q' || ch == 'q') {
-                std::cout << "Q pressed, so terminating" << std::endl;
-                terminateFlag = true;
-                for (size_t k = 0; k < instances.size(); ++k) {
-                    std::cout << "terminating instance " << k+1 << " of " << instances.size() << std::endl;
-                    instances[k]->terminate();
+    printer->print("Main loop started");
+
+    int counter = 0;
+    while (1) {
+      //   printer->debug("Checking on threads. Thread count=" + std::to_string(tw->numThreads()));
+        for (size_t k = 0; k < tw->numThreads(); ++k) {
+            const std::pair<bool, std::int64_t> p = tw->check(k);
+            if (!p.first) {
+                printer->err("Thread is dead or failed to report on time! name=" + tw->getName(k) + " index=" + std::to_string(k) + " time delta=" + std::to_string(p.second) + "ms");
+                auto status = tw->getStatus(k);
+                if (ThreadStatus::Finished == status) {
+                    printer->err("Thread is apparently dead - in Finished status index=" + std::to_string(k));
                 }
-                std::cout << "terminating screen printer" << std::endl;
-                printer->terminate();
-                std::cout << "terminating decoder pool" << std::endl;
-                decoderPool->terminate();
-                std::cout << "terminating PSKReporter interface" << std::endl;
-                if (reporter) { reporter->terminate(); }
-                std::cout << "terminating WSPRNet interface" << std::endl;
-                if (wsprNet) { wsprNet->terminate(); }
-                std::cout << "terminating RBN Aggregator interface" << std::endl;
-                if (rbn) { rbn->terminate(); }
+            }
+            else {
+       //         printer->trace("Thread reported on time. name=" + tw->getName(k) + " index=" + std::to_string(k) + " time delta=" + std::to_string(p.second) + "ms");
             }
         }
-        // 88 ms == 88mph == 142km/h == 1.21 gigawatts
-        std::this_thread::sleep_for(std::chrono::milliseconds(88));
+
+        constexpr float MAIN_LOOP_TICKS_S = 1000 / MAIN_LOOP_SLEEP_MS;
+        std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
+        if (restartInterval) {
+            ++counter;
+            if (static_cast<float>(counter) / MAIN_LOOP_TICKS_S >= static_cast<float>(restartInterval)) {
+                counter = 0;
+                for (auto& recv : receivers) {
+                    try
+                    {
+                        recv.second->restart();
+                    }
+                    catch (const std::exception& e)
+                    {
+                        printer->print("while restarting receiver", e);
+                    }
+                }
+            }
+        }
     }
+
     std::cout << "Exiting" << std::endl;
     return EXIT_SUCCESS;
 }    
