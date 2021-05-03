@@ -169,7 +169,6 @@ int main(int argc, char **argv)
     desc.add_options()
         ("help", "produce help message")
         ("configfile", po::value<std::string>(), "path and file name of configuration file")
-        ("restartinterval", po::value<int>(), "how often to restart decoder instances in seconds")
         ("decoders.decoder", po::value<std::vector<std::string>>()->multitoken(), "freq, mode, shmem, freqcal")
         ("radio.freqcalibration", po::value<double>(), "frequency calibration factor in PPM, default 1.0000000000")
         ("radio.sharedmem", po::value<int>(), "CWSL shared memory interface number to use, default -1")
@@ -196,7 +195,7 @@ int main(int argc, char **argv)
         ("wsjtx.transfermethod", po::value<std::string>(), "either wavfile or shmem, default shmem")
         ("logging.statsreportinginterval", po::value<int>(), "how often to report decoder statistics in seconds, default 300")
         ("logging.decodesfile", po::value<std::string>(), "file name for decode text log")
-        ("logging.printreports", po::value<bool>(), "prints each handled report, default true")
+        ("logging.logreports", po::value<bool>(), "log each handled report, default true")
         ("logging.printjt9output", po::value<bool>(), "prints output of JT9.exe, default false")
         ("logging.loglevel", po::value<int>(), "logging level, 5 is most verbose, 0 is nothing, 8 is everything, default is 3")
         ("logging.badmsglog", po::value<std::string>(), "path to log file for writing unhandled messages")
@@ -218,8 +217,20 @@ int main(int argc, char **argv)
         char* appdata = getenv("appdata");
         std::string appdataStr(appdata);
         cfgFilePath = appdataStr + "\\CWSL_DIGI\\config.ini";
+        std::cout << "Looking for config file: " << cfgFilePath << std::endl;
+        if (!doesFileExist(cfgFilePath)) {
+            char myPath[_MAX_PATH + 1];
+            GetModuleFileName(NULL, myPath, _MAX_PATH);
+            cfgFilePath = std::string(myPath);
+            const auto idx = cfgFilePath.find_last_of('\\');
+            if (idx != std::string::npos){
+                cfgFilePath = cfgFilePath.substr(0,idx);
+                cfgFilePath += "\\config.ini";
+                std::cout << "Looking for config file: " << cfgFilePath << std::endl;
+            }
+        }
     }
-       
+
     std::cout << "Loading config file: " << cfgFilePath << std::endl;
     std::ifstream ini_file(cfgFilePath, std::ifstream::in);
     po::parsed_options fileOpts = po::parse_config_file(ini_file, desc, true);
@@ -255,8 +266,8 @@ int main(int argc, char **argv)
     }
 
     bool printHandledReports = true;
-    if (vm.count("logging.printreports")) {
-        printHandledReports = vm["logging.printreports"].as<bool>();
+    if (vm.count("logging.logreports")) {
+        printHandledReports = vm["logging.logreports"].as<bool>();
     }
 
     if (vm.count("logging.badmsglog")) {
@@ -583,11 +594,6 @@ int main(int argc, char **argv)
         }
     }
     
-    int restartInterval = 0; 
-    if (vm.count("restartinterval")) {
-        restartInterval = vm["restartinterval"].as<int>();
-    }
-
     tw = std::make_shared<ThreadWatcher>();
 
     statsHandler = std::make_shared<Stats>(86400, static_cast<std::uint32_t>(decoders.size()));
@@ -643,7 +649,6 @@ int main(int argc, char **argv)
     if (useRBN) {
         outputHandler->setRBNHandler(rbn);
     }
-
 
     // create time signalling threads
     SyncPredicates ft8Preds(numFT8Decoders);
@@ -815,22 +820,6 @@ int main(int argc, char **argv)
 
         constexpr float MAIN_LOOP_TICKS_S = 1000 / MAIN_LOOP_SLEEP_MS;
         std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
-        if (restartInterval) {
-            ++counter;
-            if (static_cast<float>(counter) / MAIN_LOOP_TICKS_S >= static_cast<float>(restartInterval)) {
-                counter = 0;
-                for (auto& recv : receivers) {
-                    try
-                    {
-                        recv.second->restart();
-                    }
-                    catch (const std::exception& e)
-                    {
-                        printer->print("while restarting receiver", e);
-                    }
-                }
-            }
-        }
     }
 
     std::cout << "Exiting" << std::endl;

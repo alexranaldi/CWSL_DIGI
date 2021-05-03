@@ -34,7 +34,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include "ScreenPrinter.hpp"
 
 static const std::string PROGRAM_NAME = "CWSL_DIGI";
-static const std::string PROGRAM_VERSION = "0.78";
+static const std::string PROGRAM_VERSION = "0.79";
 
 constexpr float Q65_30_PERIOD = 30.0f;
 constexpr float FT8_PERIOD = 15.0f;
@@ -259,4 +259,13 @@ using boost::uuids::random_generator;
 static inline std::string make_uuid()
 {
     return lexical_cast<std::string>((random_generator())());
+}
+
+static bool doesFileExist(const std::string& fname) {
+    std::ifstream file(fname, std::ifstream::in);
+    if (!file.is_open()) {
+        return false;
+    }
+    file.close();
+    return true;
 }

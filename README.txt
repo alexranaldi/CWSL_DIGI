@@ -1,11 +1,6 @@
-CWSL_DIGI is a program for the CWSL architecture for decoding WSJT-X digital modes and sending reports to spotting networks such as PSK Reporter, Reverse Beacon Network, and WSPRNet. CWSL_DIGI was developed by W2AXR, with testing and feedback from WZ7I and W3OA.
+CWSL_DIGI is a program for the CWSL architecture for decoding WSJT-X digital modes and sending reports to spotting networks such as PSK Reporter, Reverse Beacon Network, and WSPRNet. CWSL_DIGI was developed by W2AXR, with testing and feedback from WZ7I, W3OA and 9V1RM.
 
-CWSL_DIGI is a Windows console application. For command-line usage, run CWSL_DIGI.exe --help at a Windows Command Prompt.
-
-A sample configuration file named "config.ini" should be provided with the program. For most use cases, a configuration file is sufficient to provide all input:
-CWSL_DIGI.exe --configfile C:\CWSL_DIGI\config.ini
-
-Before running CWSL_DIGI be sure to edit the configuration file to specify the proper callsign, grid square, and decoder configuration.
+Please review SETUP.txt for setup and installation instructions.
 
 Problem reports and feature requests can be sent to W2AXR, alexranaldi@gmail.com, or filed as issues on Github.
 
