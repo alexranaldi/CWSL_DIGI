@@ -115,6 +115,9 @@ public:
         SSB_SR = Wave_SR;
         decRatio = receiver->getSampleRate() / Wave_SR;
 
+        cwd = createTemporaryDirectory();
+        screenPrinter->debug(instanceLog() + " temporary directory: " + cwd);
+
         //
         // Prepare circular buffers
         // 
@@ -184,7 +187,6 @@ public:
         while (!terminateFlag) {
             tw->report(twKey);
 
-
             try {
                 if (pred->load()) {
                     pred->store(false);
@@ -223,7 +225,7 @@ public:
                     }
                     //screenPrinter->debug(instanceLog() + "Audio converted from float to i16");
                     
-                    ItemToDecode toDecode(audioBuf_i16, digitalMode, startTime, ssbFreq, id);
+                    ItemToDecode toDecode(audioBuf_i16, digitalMode, startTime, ssbFreq, id, cwd);
                     decoderPool->push(toDecode);
 
                     screenPrinter->debug(instanceLog() + "Item pushed to decode queue");
@@ -346,5 +348,7 @@ public:
 
     bool threadStarted;
     std::uint64_t twKey;
+
+    std::string cwd;
 
 };

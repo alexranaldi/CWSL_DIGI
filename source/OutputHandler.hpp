@@ -602,7 +602,7 @@ public:
     void logBadMessage(const std::string errMsg) {
         screenPrinter->print("Bad message: " + errMsg);
         std::ofstream ofs(badMessageLogFile, std::ios_base::app | std::ofstream::out);
-        ofs << errMsg << '\r\n';
+        ofs << errMsg << std::endl;
         ofs.close();
     }
 

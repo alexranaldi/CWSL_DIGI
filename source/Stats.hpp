@@ -57,15 +57,15 @@ public:
 
     virtual ~Stats() {}
 
-    std::vector<std::size_t> getCounts(const uint32_t intervalSec, std::shared_ptr<ScreenPrinter>& printer) {
+    std::vector<std::uint64_t> getCounts(const uint32_t intervalSec) {
         const std::uint64_t intervalMs = static_cast<std::uint64_t>( intervalSec ) * 1000;
-        const auto mt = getEpochTimeMs();
-        std::vector<std::size_t> out(decoderStatsVec.size());
+        const std::int64_t diff = getEpochTimeMs() - intervalMs;
+        std::vector<std::uint64_t> out(decoderStatsVec.size());
         std::fill(out.begin(), out.end(), 0);
         for (std::size_t d = 0; d < decoderStatsVec.size(); ++d) {
             DecoderStats& stats = decoderStatsVec[d];
             for (std::size_t k = 0; k < stats.size(); ++k) {
-                if (stats[k] >= mt - intervalMs) {
+                if (stats[k] > diff) {
                     out[d]++;
                 }
             }
@@ -87,12 +87,12 @@ public:
     }
 
     void prune() {
-        const auto mt = getEpochTimeMs();
+        const std::int64_t dt = getEpochTimeMs() - maxIntervalMs;
         for (DecoderStats& dec : decoderStatsVec) {
             std::sort(dec.begin(), dec.end());
             while (!dec.empty()) {
                 const std::uint64_t dv = dec.front();
-                if (dv <= mt - maxIntervalMs) {
+                if (dv <= dt) {
                     dec.erase(dec.begin());
                 }
                 else {

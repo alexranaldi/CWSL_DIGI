@@ -124,13 +124,13 @@ void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrin
         tw->report(twKey);
 
         try {
-            auto v1Min = statsHandler->getCounts(60, printer);
+            auto v1Min = statsHandler->getCounts(60);
             tw->report(twKey);
-            auto v5Min = statsHandler->getCounts(300, printer);
+            auto v5Min = statsHandler->getCounts(300);
             tw->report(twKey);
-            auto v1Hr = statsHandler->getCounts(3600, printer);
+            auto v1Hr = statsHandler->getCounts(3600);
             tw->report(twKey);
-            auto v24Hr = statsHandler->getCounts(86400, printer);
+            auto v24Hr = statsHandler->getCounts(86400);
             tw->report(twKey);
             std::stringstream hdr;
             hdr << std::setfill(' ') << std::left << std::setw(10) << "Instance" << std::setw(12) << "Frequency" << std::setw(8) << "Mode" << std::setw(8) << "24 Hour" << std::setw(8) << "1 Hour" << std::setw(8) << "5 Min" << std::setw(8) << "1 Min";
@@ -801,24 +801,36 @@ int main(int argc, char **argv)
 
     printer->print("Main loop started");
 
-    int counter = 0;
+    constexpr float MAIN_LOOP_TICKS_S = 1000 / MAIN_LOOP_SLEEP_MS;
+    // latch prevents log spam
+    std::vector<uint64_t> latch(tw->numThreads());
     while (1) {
+        std::fill(latch.begin(), latch.end(), 0);
       //   printer->debug("Checking on threads. Thread count=" + std::to_string(tw->numThreads()));
         for (size_t k = 0; k < tw->numThreads(); ++k) {
             const std::pair<bool, std::int64_t> p = tw->check(k);
-            if (!p.first) {
-                printer->err("Thread is dead or failed to report on time! name=" + tw->getName(k) + " index=" + std::to_string(k) + " time delta=" + std::to_string(p.second) + "ms");
+            if (!p.first && !latch[k]) {
+                printer->err("Thread failed to report on time! name=" + tw->getName(k) + " index=" + std::to_string(k) + " time delta=" + std::to_string(p.second) + "ms");
                 auto status = tw->getStatus(k);
                 if (ThreadStatus::Finished == status) {
-                    printer->err("Thread is apparently dead - in Finished status index=" + std::to_string(k));
+                    printer->err("Thread has finished status! index=" + std::to_string(k));
                 }
+                latch[k]++;
             }
-            else {
+            else if (p.first) {
+                if (latch[k]) {
+                    printer->info("Thread is reporting again. index=" + std::to_string(k));
+                }
+                latch[k] = 0;
        //         printer->trace("Thread reported on time. name=" + tw->getName(k) + " index=" + std::to_string(k) + " time delta=" + std::to_string(p.second) + "ms");
+            }
+            else if (!p.first) {
+                if (latch[k] > MAIN_LOOP_TICKS_S * 5) {
+                    latch[k] = 0;
+                }
             }
         }
 
-        constexpr float MAIN_LOOP_TICKS_S = 1000 / MAIN_LOOP_SLEEP_MS;
         std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
     }
 

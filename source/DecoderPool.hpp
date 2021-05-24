@@ -108,13 +108,15 @@ struct ItemToDecode
     FrequencyHz baseFreq = 0;
     std::vector<std::int16_t> audio;
     int instanceId;
+    std::string cwd;
 
     ItemToDecode() : 
         mode(""),
         epochTime(0),
         baseFreq(0),
         audio(0),
-        instanceId(0)
+        instanceId(0),
+        cwd("")
     {}
 
     ItemToDecode(
@@ -122,12 +124,14 @@ struct ItemToDecode
         const std::string modeIn,
         const std::uint64_t epochTimeIn,
         const FrequencyHz baseFreqIn,
-        const int instanceIdIn) :
+        const int instanceIdIn,
+        const std::string& cwdIn) :
         audio(audioIn),
         mode(modeIn),
         epochTime(epochTimeIn),
         baseFreq(baseFreqIn),
-        instanceId(instanceIdIn)
+        instanceId(instanceIdIn),
+        cwd(cwdIn)
         {}
 };
 
@@ -485,7 +489,7 @@ public:
             true,
             0,
             NULL,
-            binPath.c_str(),
+            item.cwd.c_str(),
             &si,
             &pi
         );
@@ -688,7 +692,7 @@ public:
             true,
             0,
             NULL,
-            binPath.c_str(),
+            item.cwd.c_str(),
             &si,
             &pi
         );

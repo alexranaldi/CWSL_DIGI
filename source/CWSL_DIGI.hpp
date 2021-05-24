@@ -34,7 +34,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include "ScreenPrinter.hpp"
 
 static const std::string PROGRAM_NAME = "CWSL_DIGI";
-static const std::string PROGRAM_VERSION = "0.79";
+static const std::string PROGRAM_VERSION = "0.81";
 
 constexpr float Q65_30_PERIOD = 30.0f;
 constexpr float FT8_PERIOD = 15.0f;
@@ -268,4 +268,14 @@ static bool doesFileExist(const std::string& fname) {
     }
     file.close();
     return true;
+}
+
+static std::string createTemporaryDirectory()
+{
+    char pathBuf[MAX_PATH] = { 0 };
+    GetTempPathA(MAX_PATH, pathBuf);
+    std::string pathstr(pathBuf);
+    std::string fullPath = pathBuf + std::string("\\") + make_uuid();
+    CreateDirectoryA((LPCSTR)fullPath.c_str(),NULL);
+    return fullPath;
 }
