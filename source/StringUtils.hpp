@@ -4,6 +4,8 @@
 #include <vector>
 #include <sstream>
 #include <algorithm> 
+#include <locale>
+#include <codecvt>
 
 // trim from start (in place)
 static inline void ltrim(std::string& s) {
@@ -63,4 +65,18 @@ static inline std::vector<std::string> splitStringByDelim(const std::string& inp
         v.push_back(s);
     }
     return v;
+}
+
+char asciitolower(char in) {
+    if (in <= 'Z' && in >= 'A')
+        return in - ('Z' - 'z');
+    return in;
+}
+
+std::string ws2s(const std::wstring& wstr)
+{
+    using convert_typeX = std::codecvt_utf8<wchar_t>;
+    std::wstring_convert<convert_typeX, wchar_t> converterX;
+
+    return converterX.to_bytes(wstr);
 }

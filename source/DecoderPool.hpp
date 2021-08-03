@@ -30,6 +30,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include "windows.h"
 #include "ScreenPrinter.hpp"
 #include "OutputHandler.hpp"
+#include "TimeUtils.hpp"
 
 #include "QtCore\qsharedmemory.h"
 
@@ -235,14 +236,6 @@ public:
         }
     }
 
-    std::uint64_t inline getEpochTime() const {
-        return getEpochTimeMs() / 1000;
-    }
-
-    std::uint64_t inline getEpochTimeMs() const {
-        return std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
-    }
-
     std::string inline decoderLog(const std::size_t workerIndex) const {
         return std::string("DecoderPool worker ") + std::to_string(workerIndex) + " ";
     }
@@ -266,6 +259,7 @@ public:
             }
 
             while (!std::get<1>(threads[workerIndex])) {
+                screenPrinter->debug(decoderLog(workerIndex) + " zzzzz");
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
                 tw->report(threadKeys[workerIndex]);
             }
@@ -277,19 +271,19 @@ public:
             bool gotItem = false;
             while (!gotItem && !gotLongItem) {
                 if (allowLong) {
-                    //screenPrinter->debug("DecoderPool Attempting long item dequeue");
+                    //screenPrinter->debug(decoderLog(workerIndex) + "DecoderPool Attempting long item dequeue");
                     gotLongItem = toDecodeLong.dequeue_timeout(item);
                 }
                 if (gotLongItem) {
-                    //screenPrinter->debug("DecoderPool Got long item");
+                    screenPrinter->debug(decoderLog(workerIndex) + "DecoderPool Got long item");
                 }
                 else {
-                    //screenPrinter->debug("DecoderPool Attempting item dequeue");
+                    //screenPrinter->debug(decoderLog(workerIndex) + "DecoderPool Attempting item dequeue");
                     gotItem = toDecode.dequeue_timeout(item);
                 }
             }
             iterationStartDecodeTime = getEpochTimeMs();
-            //screenPrinter->debug("DecoderPool Got item");
+            screenPrinter->debug(decoderLog(workerIndex) + "DecoderPool Got item");
             const uint64_t et = getEpochTime();
             if (item.epochTime == 0) {
                 continue;
@@ -299,9 +293,9 @@ public:
                 continue;
             }
             double agoSec = static_cast<double>(et) - static_cast<double>(item.epochTime);
-            double rxPeriod = getRXPeriod(item.mode);
-            if (item.mode == "WSPR") {
-                agoSec -= WSPR_PERIOD;
+            const double rxPeriod = getRXPeriod(item.mode);
+            if (item.mode == "WSPR" || item.mode == "JT65") {
+                agoSec -= rxPeriod;
             }
             double maxAgeSec = static_cast<double>(maxDataAge) * rxPeriod;
             if (maxAgeSec > MAX_AGE) {
@@ -343,6 +337,8 @@ public:
 
             screenPrinter->print(decoderLog(workerIndex) + "Items in decode queue: " + std::to_string(toDecode.size()), LOG_LEVEL::DEBUG);
         }
+        screenPrinter->debug(decoderLog(workerIndex) + " thread TERMINATING!");
+
         tw->threadFinished(threadKeys[workerIndex]);
 
     }
@@ -368,11 +364,9 @@ public:
             return;
         }
 
-
         screenPrinter->debug(decoderLog(workerIndex) + "Created shared memory segment. Key=" + skey + " size=" + std::to_string(mem_jt9.size()) + " bytes");
 
         screenPrinter->debug(decoderLog(workerIndex) + "Copying data to shmem");
-
 
         if (!mem_jt9.lock())
         {
@@ -386,6 +380,7 @@ public:
         if (item.mode == "FT8") {
             dec_data->params.lft8apon = true;
             dec_data->params.nzhsym = 0;
+            //dec_data->params.npts8 = (50 * 6912) / 16;
             dec_data->params.nmode = 8;
             dec_data->params.napwid = 50;
             dec_data->params.ntrperiod = 15; // s
@@ -394,10 +389,18 @@ public:
             dec_data->params.nmode = 5;
             dec_data->params.ntrperiod = 7.5; // s
             dec_data->params.napwid = 80;
+            dec_data->params.nzhsym = 0;
         }
         else if (item.mode == "Q65-30") {
             dec_data->params.nmode = 65;
             dec_data->params.ntrperiod = 30.0; // s
+            dec_data->params.nzhsym = 0;
+        }
+        else if (item.mode == "JT65") {
+            dec_data->params.nzhsym = 174;
+            dec_data->params.ntxmode = 65;
+            dec_data->params.nmode = 65;
+            dec_data->params.ntrperiod = 60; // s
         }
 
         dec_data->params.ndepth = decodedepth;
@@ -413,7 +416,7 @@ public:
         dec_data->params.minSync = 0;
         dec_data->params.dttol = 4;
 
-        dec_data->ipc[0] = 50; // jt9 doesnt seem to look at this value
+        dec_data->ipc[0] = dec_data->params.nzhsym;
         dec_data->ipc[1] = 1;// istart
         dec_data->ipc[2] = -1;// idone
 
@@ -470,6 +473,9 @@ public:
         else if ("Q65-30" == item.mode) {
 
         }
+        else if ("JT65" == item.mode) {
+            modeOp += "-6 -m " + std::to_string(numjt9threads) + " ";
+        }
         else {
             screenPrinter->err(decoderLog(workerIndex) + "Mode " + item.mode + " not handled");
         }
@@ -523,7 +529,6 @@ public:
                 screenPrinter->err(decoderLog(workerIndex) + "Could not acquire lock on shared memory!");
                 return;
             }
-            d->ipc[0] = 50;
             d->ipc[1] = 999;
             d->ipc[2] = 1;
         }
@@ -674,6 +679,10 @@ public:
         else if ("WSPR" == item.mode) {
             appName = "wsprd.exe";
             modeOp = " -C " + std::to_string(wsprCycles ) + " -o 5 -d ";
+        }
+        else if ("JT65" == item.mode) {
+            appName = "jt9.exe";
+            modeOp = " -6 -d " + std::to_string(decodedepth) + " ";
         }
 
         const std::string opts = modeOp + wavFileName;

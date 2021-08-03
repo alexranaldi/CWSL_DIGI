@@ -34,12 +34,13 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include "ScreenPrinter.hpp"
 
 static const std::string PROGRAM_NAME = "CWSL_DIGI";
-static const std::string PROGRAM_VERSION = "0.81";
+static const std::string PROGRAM_VERSION = "0.82";
 
 constexpr float Q65_30_PERIOD = 30.0f;
 constexpr float FT8_PERIOD = 15.0f;
 constexpr float FT4_PERIOD = 7.5f;
 constexpr float WSPR_PERIOD = 120.0f;
+constexpr float JT65_PERIOD = 60.0f;
 
 constexpr size_t Wave_SR = 12000;
 constexpr size_t SSB_BW = 6000;
@@ -83,6 +84,9 @@ static inline float getRXPeriod(const std::string& mode) {
     else if (mode == "Q65-30") {
         return Q65_30_PERIOD;
     }
+    else if (mode == "JT65") {
+        return JT65_PERIOD;
+    }
     else {
         throw std::runtime_error("Unhandled mode: " + mode);
     }
@@ -118,6 +122,39 @@ void waitForTimeQ65_30(std::shared_ptr<ScreenPrinter> printer, SyncPredicates& p
         }
     } // while
     printer->debug("Q65-30 Synchronization thread exiting");
+    tw->threadFinished(twKey);
+}
+
+void waitForTimeJT65(std::shared_ptr<ScreenPrinter> printer, SyncPredicates& preds, const uint64_t twKey) {
+    tw->threadStarted(twKey);
+    int goSec = -1;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        tw->report(twKey);
+        try {
+            std::time_t t = std::time(nullptr);
+            tm* ts = std::gmtime(&t);
+            if (go && ts->tm_sec == goSec) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = ts->tm_sec == 0;
+            if (go) {
+                printer->print("Signalling beginning of JT65 interval...", LOG_LEVEL::DEBUG);
+                goSec = ts->tm_sec;
+                for (size_t k = 0; k < preds.preds.size(); ++k) {
+                    preds.preds[k]->store(true);
+                }
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print("waitForTimeJT65", e);
+        }
+    } // while
+    printer->debug("JT65 Synchronization thread exiting");
     tw->threadFinished(twKey);
 }
 

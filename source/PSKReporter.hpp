@@ -29,6 +29,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <iostream>
 
 #include "SafeQueue.h"
+#include "TimeUtils.hpp"
 #include "ScreenPrinter.hpp"
 
 using namespace std::literals;
@@ -137,11 +138,6 @@ public:
         mSendThread.detach();
 
         return true;
-    }
-
-    const uint64_t getEpochTime() {
-        uint64_t e = std::chrono::system_clock::now().time_since_epoch() / std::chrono::seconds(1);
-        return e;
     }
 
     Packet getHeader() {

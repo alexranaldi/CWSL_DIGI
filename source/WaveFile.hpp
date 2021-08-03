@@ -1,5 +1,12 @@
 #pragma once
 
+
+#include <string>
+#include <vector>
+
+#include "windows.h"
+
+
 #ifdef __GNUC__
 #define PACK( __Declaration__ ) __Declaration__ __attribute__((__packed__))
 #endif
@@ -75,4 +82,55 @@ HANDLE wavOpen(const std::string& filename, WavHdr& Hdr, const bool isTemp)
 
     // success
     return File;
+}
+
+void waveWrite(const std::vector<std::int16_t>& audioBuffer, const std::string& fileName) {
+   // screenPrinter->print("Beginning wave file generation...", LOG_LEVEL::DEBUG);
+
+    const uint64_t startTime = std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
+
+    std::size_t DataLen = audioBuffer.size() * sizeof(std::int16_t);
+   // screenPrinter->print("Audio Data Length (bytes): " + std::to_string(DataLen), LOG_LEVEL::DEBUG);
+   // screenPrinter->print("Audio Data Length (samples): " + std::to_string(audioBuffer.size()), LOG_LEVEL::DEBUG);
+
+    WavHdr Hdr;
+
+    Hdr._RIFF[0] = 'R'; Hdr._RIFF[1] = 'I'; Hdr._RIFF[2] = 'F'; Hdr._RIFF[3] = 'F';
+    Hdr.FileLen = static_cast<uint32_t>((sizeof(Hdr) + DataLen) - 8);
+    Hdr._WAVE[0] = 'W'; Hdr._WAVE[1] = 'A'; Hdr._WAVE[2] = 'V'; Hdr._WAVE[3] = 'E';
+    Hdr._fmt[0] = 'f'; Hdr._fmt[1] = 'm'; Hdr._fmt[2] = 't'; Hdr._fmt[3] = ' ';
+
+    Hdr.FmtLen = sizeof(WAVEFORMATEX);
+    Hdr.Format.wFormatTag = WAVE_FORMAT_PCM;
+    Hdr.Format.nChannels = 1;
+    Hdr.Format.nSamplesPerSec = 12000;
+    Hdr.Format.nBlockAlign = 2;
+    Hdr.Format.nAvgBytesPerSec = Hdr.Format.nSamplesPerSec * Hdr.Format.nBlockAlign;
+    Hdr.Format.wBitsPerSample = 16;
+    Hdr.Format.cbSize = 0;
+
+    Hdr._data[0] = 'd'; Hdr._data[1] = 'a'; Hdr._data[2] = 't'; Hdr._data[3] = 'a';
+    Hdr.DataLen = static_cast<DWORD>(DataLen);
+
+    std::uint32_t bytesWritten = 0;
+
+    HANDLE File = wavOpen(fileName, Hdr, false);
+
+    const void* Data = audioBuffer.data();
+
+    try {
+        const bool writeStatus = WriteFile(File, Data, (DWORD)DataLen, (LPDWORD)&bytesWritten, NULL);
+        if (!writeStatus) {
+    //        screenPrinter->err("Error writing wave file data");
+        }
+    }
+    catch (const std::exception& e) {
+    //    screenPrinter->print("WriteFile", e);
+    }
+
+    CloseHandle(File);
+
+    const uint64_t stopTime = std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
+  //  screenPrinter->debug("Wave writing completed in " + std::to_string(static_cast<float>(stopTime - startTime) / 1000) + " sec");
+
 }

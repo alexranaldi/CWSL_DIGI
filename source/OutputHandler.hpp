@@ -130,6 +130,17 @@ public:
                     screenPrinter->print("parseOutputQ65 call", e);
                 }
             }
+            else if (item.mode == "JT65") {
+                try {
+                    parseOutputJT65(item);
+                }
+                catch (const std::exception& e) {
+                    screenPrinter->print("parseOutputQ65 call", e);
+                }
+            }
+            else {
+                screenPrinter->err("UNKNOWN MODE: " + item.mode);
+            }
         }
     }
 
@@ -227,7 +238,7 @@ public:
         while (std::getline(ss, line)) {
             trim(line);
 
-            if (line.find("DecodeFinished") != string::npos) {
+            if (line.find("DecodeFinished") != std::string::npos) {
                 continue;
             }
 
@@ -295,17 +306,89 @@ public:
             const double actualFreq = std::stod(freq) + static_cast<double>(baseFreq);
             bool success = false;
             try {
-                success = handleMessageFT4FT8(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, epochTime, mode, baseFreq, std::stof(dt));
+                success = handleMessageUniversal(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, epochTime, mode, baseFreq, std::stof(dt));
             }
             catch (const std::exception& e) {
-                screenPrinter->print("handleMessageFT4FT8 call", e);
+                screenPrinter->print("handleMessageUniversal exception: ", e);
                 success = false;
             }
             if (success) {
                 statsHandler->handleReport(instanceId, epochTime * 1000);
             }
             else {
-                screenPrinter->debug("Failed to handle FT4/FT8 message: " + msg);
+                screenPrinter->debug("Failed to handle message: " + msg);
+            }
+        }
+    }
+
+    void parseOutputJT65(const JT9Output& output) {
+
+        std::istringstream ss(output.output);
+        std::string line;
+        while (std::getline(ss, line)) {
+            trim(line);
+
+            if (line.find("DecodeFinished") != string::npos) {
+                continue;
+            }
+
+            if (line.length() <= 27) {
+                screenPrinter->debug("Skipping line because less than 27 characters: " + line);
+                continue;
+            }
+
+            if (line.at(4) != ' ') {
+                screenPrinter->debug("Skipping line because character 4 is not a space: " + line);
+                continue;
+            }
+
+            // snr is 5-7
+            std::string snr = line.substr(5, 3);
+            trim(snr);
+
+            if (line.at(8) != ' ') {
+                screenPrinter->debug("Skipping line because character 8 is not a space: " + line);
+                continue;
+            }
+
+            // dt is 9,10,11,12
+            std::string dt = line.substr(9, 4);
+            trim(dt);
+
+            // 13 is always a space
+            if (line.at(13) != ' ') {
+                screenPrinter->debug("Skipping line because character 13 is not a space: " + line);
+                continue;
+            }
+
+            // freq 14-17
+            std::string freq = line.substr(14, 4);
+            trim(freq);
+
+            // 18 is always a space
+            if (line.at(20) != ' ') {
+                screenPrinter->debug("Skipping line because character 20 is not a space: " + line);
+                continue;
+            }
+
+            // 19 is always #
+            if (line.at(19) != '#' && line.at(20) != ' ') {
+                screenPrinter->debug("Skipping line because character 19 is not a # and/or 20 is not a space: " + line);
+                continue;
+            }
+
+            // msg is 22-end
+            std::string msg = line.substr(22, 9999999);
+            trim(msg);
+
+            const double actualFreq = std::stod(freq) + static_cast<double>(output.baseFreq);
+          //  const auto success = handleMessageJT65(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, output.epochTime, output.mode, output.baseFreq, std::stof(dt));
+            const auto success = handleMessageUniversal(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, output.epochTime, output.mode, output.baseFreq, std::stof(dt));
+            if (success) {
+                statsHandler->handleReport(output.instanceId, output.epochTime * 1000);
+            }
+            else {
+                screenPrinter->debug("Failed to handle message: " + msg);
             }
         }
     }
@@ -382,13 +465,107 @@ public:
             trim(msg);
 
             const double actualFreq = std::stod(freq) + static_cast<double>(output.baseFreq);
-            const auto success = handleMessageQ65(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, output.epochTime, output.mode, output.baseFreq, std::stof(dt));
+            const auto success = handleMessageUniversal(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, output.epochTime, output.mode, output.baseFreq, std::stof(dt));
             if (success) {
                 statsHandler->handleReport(output.instanceId, output.epochTime * 1000);
+            }
+            else {
+                screenPrinter->debug("Failed to handle message: " + msg);
             }
         }
     }
 
+    /*
+    bool handleMessageJT65(const int32_t snr, const uint32_t freq, std::string msg, const uint64_t epochTime, const std::string& modeIn, const FrequencyHz baseFreq, const float dt) {
+        const std::string mode = "JT65";
+        std::ostringstream s;
+        s << std::setw(4) << mode << std::setw(12) << epochTime << std::setw(12) << freq << std::setw(5) << snr << "  " << std::setw(5) << dt << "  " << std::left << std::setw(52) << msg;
+        const std::string msgOutput = s.str();
+        if (printHandledReports) {
+            screenPrinter->print(msgOutput, LOG_LEVEL::INFO);
+        }
+        if (useDecodesFile) {
+            ofs << msgOutput << std::endl;
+        }
+
+        // look for '?' and chop it, and anything after
+        std::vector<std::string> chop = { "?" };
+        for (auto& c : chop) {
+            size_t qPos = msg.find(c);
+            if (qPos != std::string::npos) {
+                msg = msg.substr(0, qPos);
+                trim(msg);
+            }
+        }
+
+        std::vector<size_t> spaces;
+        for (int k = 0; k < msg.length(); ++k) {
+            if (msg.at(k) == ' ') {
+                spaces.push_back(k);
+            }
+        }
+
+        const std::size_t numSpaces = spaces.size();
+        const bool isCQ = msg.at(0) == 'C' && msg.at(1) == 'Q';
+        if (isCQ && numSpaces == 1 && msg.at(2) == ' ') {
+            // CQ CALL
+            std::string call = msg.substr(3, msg.length() - 3);
+            if (reporter) {
+                reporter->handle(call, snr, freq, epochTime, mode);
+            }
+            return true;
+        }
+        if (isCQ && numSpaces == 2) {
+            std::string first = msg.substr(spaces[0] + 1, spaces[1] - spaces[0] - 1);
+            std::string second = msg.substr(spaces[1] + 1, msg.length() - spaces[1] + 1);
+            if (isValidLocator(second)) {
+                // CQ CALL GRID
+                if (reporter) {
+                    reporter->handle(first, snr, freq, second, epochTime, mode);
+                }
+            }
+            else {
+                // CQ SOMETHING CALL
+                if (reporter) {
+                    reporter->handle(first, snr, freq, epochTime, mode);
+                }
+            }
+            return true;
+        }
+        else if (isCQ && numSpaces == 3) {
+            // CQ SOMETHING CALL GRID
+            std::string call = msg.substr(spaces[1] + 1, spaces[2] - spaces[1] - 1);
+            std::string loc = msg.substr(spaces[2] + 1, msg.length() - spaces[2] + 1);
+            if (isValidLocator(loc)) {
+                if (reporter) {
+                    reporter->handle(call, snr, freq, loc, epochTime, mode);
+                }
+                return true;
+            }
+            else {
+                logBadMessage("Full msg with bad locator: " + msg);
+            }
+        }
+        else if (!isCQ) {
+            if (numSpaces == 2) {
+                // CALL CALL REP
+                // CALL CALL 73
+                // CALL CALL GRID
+                std::string tx_call = msg.substr(spaces[0] + 1, spaces[1] - spaces[0] - 1);
+                if (reporter) {
+                    reporter->handle(tx_call, snr, freq, epochTime, mode);
+                }
+                return true;
+            }
+        }
+        logBadMessage("Message not handled: " + msg);
+        logBadMessage("isCQ=" + std::to_string(isCQ));
+        logBadMessage("numSpaces=" + std::to_string(spaces.size()));
+        return false;
+    }
+    */
+
+    /*
     bool handleMessageQ65(const int32_t snr, const uint32_t freq, std::string msg, const uint64_t epochTime, const std::string& modeIn, const FrequencyHz baseFreq, const float dt) {
         const std::string mode = "Q65";
         std::ostringstream s;
@@ -419,7 +596,7 @@ public:
         }
 
         const std::size_t numSpaces = spaces.size();
-        const bool isCQ = (msg.at(0) == 'C') & (msg.at(1) == 'Q');
+        const bool isCQ = msg.at(0) == 'C' && msg.at(1) == 'Q';
         if (isCQ && numSpaces == 1 && msg.at(2) == ' ') {
             // CQ CALL
             std::string call = msg.substr(3, msg.length() - 3);
@@ -453,14 +630,11 @@ public:
                 if (reporter) {
                     reporter->handle(call, snr, freq, loc, epochTime, mode);
                 }
+                return true;
             }
             else {
                 logBadMessage("Full msg with bad locator: " + msg);
-                if (reporter) {
-                    reporter->handle(call, snr, freq, epochTime, mode);
-                }
             }
-            return true;
         }
         else if (!isCQ) {
             if (numSpaces == 2) {
@@ -474,17 +648,16 @@ public:
                 return true;
             }
         }
-        else {
-            logBadMessage("Message not handled: " + msg);
-            logBadMessage("isCQ=" + std::to_string(isCQ));
-            logBadMessage("numSpaces=" + std::to_string(spaces.size()));
-
-        }
+        logBadMessage("Message not handled: " + msg);
+        logBadMessage("isCQ=" + std::to_string(isCQ));
+        logBadMessage("numSpaces=" + std::to_string(spaces.size()));
         return false;
     }
+    */
 
+    /*
     bool handleMessageFT4FT8(const int32_t snr, const uint32_t freq, std::string msg, const uint64_t epochTime, const std::string& mode, const FrequencyHz baseFreq, const float dt) {
-                
+        
         std::ostringstream s;
         s << std::setw(4) << mode << std::setw(12) << epochTime << std::setw(12) << freq << std::setw(5) << snr << "  " << std::setw(5) << dt << "  " << std::left << std::setw(52) << msg;
         const std::string msgOutput = s.str();
@@ -499,26 +672,18 @@ public:
         }
 
         trim(msg);
-        //screenPrinter->debug("trimmed message: " + msg);
 
         // look for '?' and chop it, and anything after
-        const size_t qPos = msg.find_last_of('?');
-        if (qPos != std::string::npos && qPos > 12) {
-            //screenPrinter->debug("found ? at position " + std::to_string(qPos) + " in message: " + msg);
-            msg = msg.substr(0, qPos-1);
-            //screenPrinter->debug("updated message: " + msg);
-            trim(msg);
-        }
-        // look for 'a1' and chop it, and anything after
-        const size_t a1Pos = msg.find("a1");
-        if (a1Pos != std::string::npos && a1Pos > 12) {
-            //screenPrinter->debug("found a1 at position " + std::to_string(a1Pos) + " in message: " + msg);
-            msg = msg.substr(0, a1Pos-1);
-            //screenPrinter->debug("updated message: " + msg);
-            trim(msg);
+        std::vector<std::string> chop = { "?","a1","a2" };
+        for (auto& c : chop) {
+            size_t qPos = msg.find(c);
+            if (qPos != std::string::npos) {
+                msg = msg.substr(0, qPos);
+                trim(msg);
+            }
         }
 
-        if (msg.size() <= 6) {
+        if (msg.size() < 6) {
             logBadMessage("Message not handled -- too short: " + msg);
             return false; 
         }
@@ -538,72 +703,228 @@ public:
             logBadMessage("Message not handled -- no spaces: " + msg);
             return false;
         }
-        const bool isCQ = (msg.at(0) == 'C') & (msg.at(1) == 'Q');
+        const bool isCQ = msg.at(0) == 'C' && msg.at(1) == 'Q';
         if (isCQ && numSpaces == 1 && msg.at(2) == ' ') {
             // CQ CALL
             std::string call = msg.substr(3, msg.length() - 3);
-            if (reporter) {
-                reporter->handle(call, snr, freq, epochTime, mode);
-            }
-            return true;
-        }
-        if (isCQ && numSpaces == 2) {
-            std::string first = msg.substr(spaces[0] + 1, spaces[1] - spaces[0]);
-            std::string second = msg.substr(spaces[1] + 1, msg.length() - spaces[1] + 1);
-            if (isValidLocator(second)) {
-                // CQ CALL GRID
-                if (reporter) {
-                    reporter->handle(first, snr, freq, second, epochTime, mode);
-                }
-            }
-            else {
-                // CQ SOMETHING CALL
-                if (reporter) {
-                    reporter->handle(first, snr, freq, epochTime, mode);
-                }
-            }
-            return true;
-        }
-        else if (isCQ && numSpaces == 3) {
-            // CQ SOMETHING CALL GRID
-            std::string call = msg.substr(spaces[1] + 1, spaces[2] - spaces[1]);
-            std::string loc = msg.substr(spaces[2] + 1, msg.length() - spaces[2] + 1);
-            if (isValidLocator(loc)) {
-                if (reporter) {
-                    reporter->handle(call, snr, freq, loc, epochTime, mode);
-                }
-            }
-            else {
-                logBadMessage("Full msg with bad locator: " + msg);
+            if (checkCall(call)) {
                 if (reporter) {
                     reporter->handle(call, snr, freq, epochTime, mode);
                 }
+                return true;
             }
-            return true;
+        }
+        if (isCQ && numSpaces == 2) {
+            std::string first = msg.substr(spaces[0] + 1, (spaces[1] - spaces[0] - 1));
+            std::string second = msg.substr(spaces[1] + 1, msg.length() - spaces[1] + 1);
+            if (checkCall(first)) {
+                if (isValidLocator(second)) {
+                    // CQ CALL GRID
+                    if (reporter) {
+                        reporter->handle(first, snr, freq, second, epochTime, mode);
+                    }
+                }
+                else {
+                    // CQ SOMETHING CALL
+                    if (reporter) {
+                        reporter->handle(first, snr, freq, epochTime, mode);
+                    }
+                }
+                return true;
+            }
+        }
+        else if (isCQ && numSpaces == 3) {
+            // CQ SOMETHING CALL GRID
+            std::string call = msg.substr(spaces[1] + 1, (spaces[2] - spaces[1])-1);
+            std::string loc = msg.substr(spaces[2] + 1, msg.length() - spaces[2] + 1);
+            if (checkCall(call) && isValidLocator(loc)) {
+                if (reporter) {
+                    reporter->handle(call, snr, freq, loc, epochTime, mode);
+                }
+                return true;
+            }
+            else {
+                logBadMessage("Full msg with bad call or locator: " + msg);
+            }
         }
         else if (!isCQ) {
             if (numSpaces == 2) {
                 // CALL CALL REP
                 // CALL CALL 73
                 // CALL CALL GRID
-                std::string tx_call = msg.substr(spaces[0] + 1, spaces[1] - spaces[0]);
+                std::string tx_call = msg.substr(spaces[0] + 1, spaces[1] - spaces[0] - 1);
+                if (checkCall(tx_call)){
+                    if (reporter) {
+                        reporter->handle(tx_call, snr, freq, epochTime, mode);
+                    }
+                    return true;
+                }
+            }
+        }
+        logBadMessage("Message not handled: " + msg);
+        return false;
+    }
+    */
+
+    void logBadMessage(const std::string badMsg) {
+        screenPrinter->print("Bad message: " + badMsg);
+        std::ofstream ofs(badMessageLogFile, std::ios_base::app | std::ofstream::out);
+        ofs << badMsg << std::endl;
+        ofs.close();
+    }
+
+    bool checkCall(const std::string& call) {
+        std::string test = call;
+        trim(test);
+
+        if (test.size() < 3) {
+            return false;
+        }
+        
+        // If callsign ends in \R it is likely invalid
+        if ( test.at(test.length()-1) == 'R' && test.at(test.length()-2) == '\\' ) {
+            return false;
+        }
+
+        // Callsign OK
+        return true;
+    }
+
+    bool handleMessageUniversal(
+        const int32_t snr, 
+        const uint32_t freq, 
+        std::string msg, 
+        const uint64_t epochTime, 
+        const std::string& mode, 
+        const FrequencyHz baseFreq, 
+        const float dt) {
+        std::ostringstream s;
+        s << std::setw(4) << mode << std::setw(12) << epochTime << std::setw(12) << freq << std::setw(5) << snr << "  " << std::setw(5) << dt << "  " << std::left << std::setw(52) << msg;
+        const std::string msgOutput = s.str();
+
+        if (printHandledReports) {
+            screenPrinter->print(msgOutput, LOG_LEVEL::INFO);
+        }
+        if (useDecodesFile) {
+            ofs << msgOutput << std::endl;
+        }
+
+        // Let RBN handle messages on its own - no preprocessing/checking, but only FT4/FT8
+        if ((mode == "FT8" || mode == "FT4") && rbn) {
+            rbn->handle(freq, baseFreq, snr, msg, mode);
+        }
+
+        //screenPrinter->debug("handling message=" + msg);
+
+        trim(msg);
+
+        // look for and chop any error flags and anything after
+        std::vector<std::string> chop = { "?","a1","a2","q0","q1","q2","q3","q4","q5" };
+        for (auto& c : chop) {
+            size_t qPos = msg.find(c);
+            if (qPos != std::string::npos) {
+                msg = msg.substr(0, qPos);
+                trim(msg);
+            }
+        }
+
+        //screenPrinter->debug("handling message post chop and trim=" + msg);
+
+
+        if (msg.length() < 6) {
+            logBadMessage("Message not handled -- too short: " + msg);
+            return false;
+        }
+
+        std::vector<size_t> spaces;
+        spaces.reserve(16); // don't set initial size, we check size later
+        for (size_t k = 0; k < msg.length(); ++k) {
+            if (msg.at(k) == ' ') {
+                spaces.push_back(k);
+            }
+        }
+
+        const std::size_t numSpaces = spaces.size();
+        //screenPrinter->debug("Number of spaces in message: " + std::to_string(numSpaces));
+
+        if (0 == numSpaces) {
+            logBadMessage("Message not handled -- no spaces: " + msg);
+            return false;
+        }
+
+        const bool isCQ = msg.at(0) == 'C' && msg.at(1) == 'Q';
+
+        //screenPrinter->debug("isCQ=" + std::to_string(isCQ));
+
+
+        if (isCQ && numSpaces == 1 && msg.at(2) == ' ') {
+            // CQ CALL
+            std::string call = msg.substr(3, msg.length() - 3);
+            if (checkCall(call)) {
                 if (reporter) {
-                    reporter->handle(tx_call, snr, freq, epochTime, mode);
+                    reporter->handle(call, snr, freq, epochTime, mode);
                 }
                 return true;
             }
+            else {
+                screenPrinter->debug("Callsign failed validation: " + call);
+            }
         }
-        else {
-            logBadMessage("Message not handled: " + msg);
+        else if (isCQ && numSpaces == 2) {
+            std::string first = msg.substr(spaces[0] + 1, (spaces[1] - spaces[0] - 1));
+            std::string second = msg.substr(spaces[1] + 1, msg.length() - spaces[1] + 1);
+            if (checkCall(first)) {
+                if (isValidLocator(second)) {
+                    // CQ CALL GRID
+                    if (reporter) {
+                        reporter->handle(first, snr, freq, second, epochTime, mode);
+                    }
+                }
+                else {
+                    // CQ SOMETHING CALL
+                    if (reporter) {
+                        reporter->handle(first, snr, freq, epochTime, mode);
+                    }
+                }
+                return true;
+            }
+            else {
+                screenPrinter->debug("Callsign failed validation:" + first);
+            }
         }
+        else if (isCQ && numSpaces == 3) {
+            // CQ SOMETHING CALL GRID
+            std::string call = msg.substr(spaces[1] + 1, (spaces[2] - spaces[1]) - 1);
+            std::string loc = msg.substr(spaces[2] + 1, msg.length() - spaces[2] + 1);
+            if (checkCall(call) && isValidLocator(loc)) {
+                if (reporter) {
+                    reporter->handle(call, snr, freq, loc, epochTime, mode);
+                }
+                return true;
+            }
+            else {
+                logBadMessage("Full msg with bad call or locator: " + msg);
+            }
+        }
+        else if (!isCQ) {
+            if (numSpaces == 2) {
+                // CALL CALL REP
+                // CALL CALL 73
+                // CALL CALL GRID
+                std::string tx_call = msg.substr(spaces[0] + 1, spaces[1] - spaces[0] - 1);
+                if (checkCall(tx_call)) {
+                    if (reporter) {
+                        reporter->handle(tx_call, snr, freq, epochTime, mode);
+                    }
+                    return true;
+                }
+                else {
+                    screenPrinter->debug("Callsign failed validation: " + tx_call);
+                }
+            }
+        }
+        logBadMessage("Message not handled: " + msg);
         return false;
-    }
-
-    void logBadMessage(const std::string errMsg) {
-        screenPrinter->print("Bad message: " + errMsg);
-        std::ofstream ofs(badMessageLogFile, std::ios_base::app | std::ofstream::out);
-        ofs << errMsg << std::endl;
-        ofs.close();
     }
 
 private:

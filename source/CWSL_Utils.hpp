@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 
+#include "SharedMemory.h"
+
 
 // Maximum of CWSL bands
 #define MAX_CWSL   32

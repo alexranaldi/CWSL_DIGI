@@ -31,6 +31,8 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <sstream>
 #include "SafeQueue.h"
 
+#include <windows.h> // GetSystemTime
+
 enum LOG_LEVEL : int {
     MAX_VERBOSE = 8,
     TRACE = 5,

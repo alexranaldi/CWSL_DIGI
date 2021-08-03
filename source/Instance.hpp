@@ -44,7 +44,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include "DecoderPool.hpp"
 
 // SSB demod
-#include "../Utils/SSBD.hpp"
+#include "SSBD.hpp"
 
 
 class Instance {
@@ -225,7 +225,7 @@ public:
                     }
                     //screenPrinter->debug(instanceLog() + "Audio converted from float to i16");
                     
-                    ItemToDecode toDecode(audioBuf_i16, digitalMode, startTime, ssbFreq, id, cwd);
+                    ItemToDecode toDecode(audioBuf_i16, digitalMode, startTime, ssbFreq, static_cast<int>(id), cwd);
                     decoderPool->push(toDecode);
 
                     screenPrinter->debug(instanceLog() + "Item pushed to decode queue");

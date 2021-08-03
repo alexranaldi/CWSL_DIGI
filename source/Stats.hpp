@@ -65,7 +65,7 @@ public:
         for (std::size_t d = 0; d < decoderStatsVec.size(); ++d) {
             DecoderStats& stats = decoderStatsVec[d];
             for (std::size_t k = 0; k < stats.size(); ++k) {
-                if (stats[k] > diff) {
+                if (static_cast<std::int64_t>(stats[k]) > diff) {
                     out[d]++;
                 }
             }
@@ -91,7 +91,7 @@ public:
         for (DecoderStats& dec : decoderStatsVec) {
             std::sort(dec.begin(), dec.end());
             while (!dec.empty()) {
-                const std::uint64_t dv = dec.front();
+                const std::int64_t dv = static_cast<std::int64_t>(dec.front());
                 if (dv <= dt) {
                     dec.erase(dec.begin());
                 }
@@ -100,10 +100,6 @@ public:
                 }
             }
         }
-    }
-
-    std::uint64_t getEpochTimeMs() const {
-        return std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
     }
 
 private:

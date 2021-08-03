@@ -27,6 +27,8 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <utility>
 #include <iostream>
 
+#include "TimeUtils.hpp"
+
 enum ThreadStatus {
     Running,
     Finished
@@ -70,10 +72,6 @@ class ThreadWatcher {
 
     virtual ~ThreadWatcher() {
 
-    }
-
-    std::uint64_t getEpochTimeMs() const {
-        return std::chrono::steady_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
     }
 
     ThreadStatus getStatus(const size_t index) {

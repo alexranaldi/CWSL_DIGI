@@ -111,6 +111,10 @@ struct ring_buffer_t {
         }
     }
 
+    T& current() {
+        return recs[read_index];
+    }
+
     T& pop_ref()
     {
         T& curr = recs[read_index];

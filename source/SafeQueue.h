@@ -31,6 +31,14 @@ public:
         c.notify_one();
     }
 
+    // Add an element to the queue.
+    void enqueue_move(T& t)
+    {
+        std::lock_guard<std::mutex> lock(m);
+        q.push(std::move(t));
+        c.notify_one();
+    }
+
     bool dequeue(T& item) {
         std::unique_lock<std::mutex> lock(m);
         if (q.empty()) 
@@ -40,6 +48,13 @@ public:
         item = q.front();
         q.pop();
         return true;
+    }
+
+    T dequeue_move() {
+        std::unique_lock<std::mutex> lock(m);
+        auto item = std::move(q.front());
+        q.pop();
+        return std::move(item);
     }
 
     T dequeue(void)
@@ -58,7 +73,6 @@ public:
     bool dequeue_timeout(T& item)
     {
         std::unique_lock<std::mutex> lock(m);
-        int i;
         while (q.empty())
         {
             // release lock as long as the wait and reaquire it afterwards.

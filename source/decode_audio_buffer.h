@@ -76,6 +76,14 @@ public:
         startEpochTime = 0;
     }
 
+    void initByteSize(const std::size_t new_size)
+    {
+        size = new_size / sizeof(T);
+        buf = reinterpret_cast<T*>(malloc(new_size));
+        write_index = 0;
+        startEpochTime = 0;
+    }
+
     bool full() const {
         return size == write_index - 1;
     }

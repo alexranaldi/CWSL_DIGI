@@ -57,12 +57,6 @@ public:
         terminateFlag(false),
         twKey(tw->addThread("receiver " + std::to_string(id)))
     {
-    //   ofs.open("C:\\temp\\cwsl_digi_data.txt", std::ios_base::app | std::ofstream::out);
-
-    }
-
-    void flushDiskThread() {
-        
 
     }
 
@@ -214,7 +208,7 @@ public:
 
                 std::vector<std::complex<float>> rawiq(readSize);
 
-                const bool readSuccess = SM.Read((PBYTE)rawiq.data(), readSize);
+                const bool readSuccess = SM.Read((PBYTE)rawiq.data(), (DWORD)readSize);
                 if (!readSuccess) {
                     screenPrinter->warning(receiverLog() + "Did not read any I/Q data from shared memory. CPU Overload?");
                 }

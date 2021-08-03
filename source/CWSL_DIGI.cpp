@@ -50,7 +50,7 @@ along with CWSL_DIGI.If not, see < https://www.gnu.org/licenses/>.
 
 #  pragma comment(lib, "Ws2_32.lib")
 
-#include "../Utils/SharedMemory.h"
+#include "SharedMemory.h"
 
 #include "Instance.hpp"
 #include "Receiver.hpp"
@@ -314,6 +314,7 @@ int main(int argc, char **argv)
     int numFT8Decoders = 0;
     int numWSPRDecoders = 0;
     int numQ65_30Decoders = 0;
+    int numJT65Decoders = 0;
 
     using Decoder = std::tuple<std::uint32_t, std::string, int, double>;
     using DecoderVec = std::vector<Decoder>;
@@ -343,6 +344,9 @@ int main(int argc, char **argv)
             }
             else if (mode == "Q65-30") {
                 numQ65_30Decoders++;
+            }
+            else if (mode == "JT65") {
+                numJT65Decoders++;
             }
             else {
                 printer->err("Error parsing decoder line, unknown mode! Line: " + rawLine);
@@ -386,7 +390,8 @@ int main(int argc, char **argv)
         }
         const float nd1 = static_cast<float>(numFT4Decoders + numFT8Decoders + numQ65_30Decoders) * (1.0f/5.0f); // 1 per 5 ft4/ft8/Q65
         const float nd2 = static_cast<float>(numWSPRDecoders) * (1.0f/3.0f); // 1 per 3 wspr
-        const float nInstf = (nd1 + nd2) * decoderburden;
+        const float nd3 = static_cast<float>(numJT65Decoders) * (1.0f / 3.0f); // 1 per 3 JT-65
+        const float nInstf = (nd1 + nd2 + nd3) * decoderburden;
         numJT9Instances = static_cast<int>(std::round(nInstf + 0.55f));
     }
     printer->print("Maximum number of simultaneous jt9.exe and wsprd.exe instances: " + std::to_string(numJT9Instances));
@@ -679,6 +684,13 @@ int main(int argc, char **argv)
         q65_30SignalThread = std::thread(&waitForTimeQ65_30, printer, std::ref(q65_30Preds), twKey);
         q65_30SignalThread.detach();
     }
+    SyncPredicates JT65Preds(numJT65Decoders);
+    std::thread JT65SignalThread;
+    if (numJT65Decoders) {
+        const auto twKey = tw->addThread("JT65SignalThread");
+        JT65SignalThread = std::thread(&waitForTimeJT65, printer, std::ref(JT65Preds), twKey);
+        JT65SignalThread.detach();
+    }
 
     // USB/LSB.  USB = 1, LSB = 0
     constexpr int USB = 1;
@@ -687,6 +699,7 @@ int main(int argc, char **argv)
     int ft4PredIndex = 0;
     int wsprPredIndex = 0;
     int q65_30PredIndex = 0;
+    int JT65PredIndex = 0;
 
     for (size_t k = 0; k < decoders.size(); ++k) {
         const auto& decoder = decoders[k];
@@ -695,7 +708,7 @@ int main(int argc, char **argv)
         const auto& smnum = std::get<2>(decoder);
         const auto& d_freqcal = std::get<3>(decoder);
 
-        if (mode != "FT8" && mode != "FT4" && mode != "WSPR" && mode != "Q65-30") {
+        if (mode != "FT8" && mode != "FT4" && mode != "WSPR" && mode != "Q65-30" && mode != "JT65") {
             printer->err("Unknown mode specified: " + mode);
             cleanup();
             return EXIT_FAILURE;
@@ -750,6 +763,10 @@ int main(int argc, char **argv)
             pred = q65_30Preds.preds[q65_30PredIndex];
             q65_30PredIndex++;
         }
+        else if (mode == "JT65") {
+            pred = JT65Preds.preds[JT65PredIndex];
+            JT65PredIndex++;
+        }
         else {
             printer->err("Unhandled mode: " + mode);
             cleanup();
@@ -799,7 +816,10 @@ int main(int argc, char **argv)
     //  Main Loop
     //
 
-    printer->print("Main loop started");
+    printer->print("Main loop starting");
+
+    // sleep on startup so all other threads have a chance to do their initial work and report.
+    std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
 
     constexpr float MAIN_LOOP_TICKS_S = 1000 / MAIN_LOOP_SLEEP_MS;
     // latch prevents log spam
