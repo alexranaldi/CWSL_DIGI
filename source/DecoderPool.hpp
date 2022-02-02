@@ -1,7 +1,10 @@
 #pragma once
 
+#ifndef DECODER_POOL_HPP
+#define DECODER_POOL_HPP
+
 /*
-Copyright 2021 Alexander Ranaldi
+Copyright 2022 Alexander Ranaldi
 W2AXR
 alexranaldi@gmail.com
 
@@ -25,12 +28,15 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <string>
 #include <memory>
 #include <utility>
+#include <tuple>
 
 #include "CWSL_DIGI.hpp"
 #include "windows.h"
 #include "ScreenPrinter.hpp"
-#include "OutputHandler.hpp"
 #include "TimeUtils.hpp"
+#include "CWSL_DIGI_Types.hpp"
+#include "OutputHandler.hpp"
+#include "WaveFile.hpp"
 
 #include "QtCore\qsharedmemory.h"
 
@@ -174,13 +180,10 @@ public:
 
     virtual ~DecoderPool(){}
 
-    bool init() {
+    inline bool init() {
         int createdLong = 0;
         for (uint16_t k = 0; k < numWorkers; ++k) {
             screenPrinter->debug("Creating DecoderPool worker thread " + std::to_string(k) + " of " + std::to_string(numWorkers));
-            uint64_t key = tw->addThread("DecoderPool worker " + std::to_string(k));
-            tw->setAllowedDelta(key, 120 * 1000);
-            threadKeys.push_back(key);
             const bool allowLong = createdLong < maxWSPRDInstances;
             threads.push_back(make_tuple(std::thread(&DecoderPool::doWork, this, k, allowLong), true, allowLong));
             std::get<0>(threads.back()).detach();
@@ -189,12 +192,10 @@ public:
             }
         }
 
-        //statsThread = std::thread(&DecoderPool::statsLoop,this);
-
         return true;
     }
 
-    void statsLoop() {
+    inline void statsLoop() {
         while (!terminateFlag) {
             std::this_thread::sleep_for(std::chrono::milliseconds(60000));
             if (iterationTimes.empty()) { continue; }
@@ -236,13 +237,12 @@ public:
         }
     }
 
-    std::string inline decoderLog(const std::size_t workerIndex) const {
+    inline std::string decoderLog(const std::size_t workerIndex) const {
         return std::string("DecoderPool worker ") + std::to_string(workerIndex) + " ";
     }
 
-    void doWork(const size_t workerIndex, const bool allowLong) {
+    inline void doWork(const size_t workerIndex, const bool allowLong) {
         screenPrinter->debug(decoderLog(workerIndex) + " thread " + std::to_string(workerIndex) + " reporting for duty.");
-        tw->threadStarted(threadKeys[workerIndex]);
 
         std::uint64_t iterationStartTime = getEpochTimeMs();
         std::uint64_t iterationStartDecodeTime = getEpochTimeMs();
@@ -261,15 +261,14 @@ public:
             while (!std::get<1>(threads[workerIndex])) {
                 screenPrinter->debug(decoderLog(workerIndex) + " zzzzz");
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));
-                tw->report(threadKeys[workerIndex]);
             }
 
             iterationStartTime = getEpochTimeMs();
-            tw->report(threadKeys[workerIndex]);
             ItemToDecode item;
             bool gotLongItem = false;
             bool gotItem = false;
             while (!gotItem && !gotLongItem) {
+
                 if (allowLong) {
                     //screenPrinter->debug(decoderLog(workerIndex) + "DecoderPool Attempting long item dequeue");
                     gotLongItem = toDecodeLong.dequeue_timeout(item);
@@ -339,15 +338,13 @@ public:
         }
         screenPrinter->debug(decoderLog(workerIndex) + " thread TERMINATING!");
 
-        tw->threadFinished(threadKeys[workerIndex]);
-
     }
 
-    void terminate() {
+    inline void terminate() {
         terminateFlag = true;
     }
 
-    void decodeUsingShMem(const ItemToDecode& item, const size_t workerIndex) {
+    inline void decodeUsingShMem(const ItemToDecode& item, const size_t workerIndex) {
         std::string skey = "CWSL_DIGI_" + std::to_string(workerIndex) + "_" + std::to_string(item.instanceId) + "_" + std::to_string(getEpochTimeMs()) + "_" + make_uuid();
 
         QString qkey = QString::fromStdString(skey);
@@ -553,7 +550,7 @@ public:
 
     }
 
-    std::string writeWaveFile(const ItemToDecode& item, const std::vector<std::int16_t>& audioBuffer) {
+    inline std::string writeWaveFile(const ItemToDecode& item, const std::vector<std::int16_t>& audioBuffer) {
         std::string fpart = make_uuid() + ".wav";
         const std::string fileName = wavPath + "\\" + fpart;
         screenPrinter->debug("Generated temporary file name: " + fileName);
@@ -568,7 +565,7 @@ public:
         return fileName;
     }
 
-    void waveWrite(const std::vector<std::int16_t>& audioBuffer, const std::string& fileName) {
+    inline void waveWrite(const std::vector<std::int16_t>& audioBuffer, const std::string& fileName) {
         screenPrinter->print("Beginning wave file generation...", LOG_LEVEL::DEBUG);
 
         const uint64_t startTime = std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
@@ -619,7 +616,7 @@ public:
 
     }
 
-    void decodeUsingFile(const ItemToDecode& item, const std::size_t workerIndex) {
+    inline void decodeUsingFile(const ItemToDecode& item, const std::size_t workerIndex) {
 
         const std::string wavFileName = writeWaveFile(item, item.audio);
 
@@ -678,7 +675,7 @@ public:
         }
         else if ("WSPR" == item.mode) {
             appName = "wsprd.exe";
-            modeOp = " -C " + std::to_string(wsprCycles ) + " -o 5 -d ";
+            modeOp = " -C " + std::to_string(wsprCycles) + " -o 5 -d ";
         }
         else if ("JT65" == item.mode) {
             appName = "jt9.exe";
@@ -744,7 +741,7 @@ public:
         }
     }
 
-    bool readDataFromExtProgram(HANDLE& pip, const uint64_t epochTime, const FrequencyHz baseFreq, const std::string& digitalMode, const std::size_t instanceId, const std::size_t workerIndex)
+    inline bool readDataFromExtProgram(HANDLE& pip, const uint64_t epochTime, const FrequencyHz baseFreq, const std::string& digitalMode, const std::size_t instanceId, const std::size_t workerIndex)
     {
         constexpr size_t BUF_SIZE = 32768;
         DWORD dwRead;
@@ -816,8 +813,6 @@ private:
     int decodedepth;
     uint32_t highestDecodeFreq;
 
-    std::shared_ptr<OutputHandler> oh;
-
     bool printJT9Output;
     std::string binPath;
 
@@ -833,9 +828,10 @@ private:
 
     int maxWSPRDInstances;
 
-    std::vector<std::uint64_t> threadKeys;
     std::thread statsThread;
 
     std::vector<std::tuple< std::uint64_t, std::uint64_t,std::uint64_t>> iterationTimes;
 
 };
+
+#endif

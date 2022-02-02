@@ -145,6 +145,18 @@ struct ring_buffer_spmc_t {
         return curr;
     }
 
+    T pop_no_wait(const std::size_t readerIndex)
+    {
+        T curr = recs[getReadIndex(readerIndex)];
+        if (getReadIndex(readerIndex) == size - 1) {
+            setReadIndex(readerIndex, 0);
+        }
+        else {
+            setReadIndex(readerIndex, getReadIndex(readerIndex) + 1);
+        }
+        return curr;
+    }
+
     T pop(const std::size_t readerIndex)
     {
         wait_for_data(readerIndex);

@@ -30,6 +30,8 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 
 #include "SafeQueue.h"
 #include "ScreenPrinter.hpp"
+#include "TimeUtils.hpp"
+#include "Decoder.hpp"
 
 struct StatsItem {
     StatsItem(const std::size_t id, const std::uint64_t ms) : 
@@ -50,24 +52,24 @@ public:
         maxIntervalSec(maxIntervalSec_In),
         maxIntervalMs(static_cast<std::uint64_t>(maxIntervalSec_In) * 1000),
         numDecoders(numDecoders_In),
-        decoderStatsVec(numDecoders_In)
-        {
+        decoderStatsVec(numDecoders_In) {
+
+        for (auto& v : decoderStatsVec) {
+            v.reserve(10000);
+        }
 
     }
 
     virtual ~Stats() {}
 
-    std::vector<std::uint64_t> getCounts(const uint32_t intervalSec) {
+    std::uint64_t getCounts(const size_t index, const std::uint32_t intervalSec) {
         const std::uint64_t intervalMs = static_cast<std::uint64_t>( intervalSec ) * 1000;
         const std::int64_t diff = getEpochTimeMs() - intervalMs;
-        std::vector<std::uint64_t> out(decoderStatsVec.size());
-        std::fill(out.begin(), out.end(), 0);
-        for (std::size_t d = 0; d < decoderStatsVec.size(); ++d) {
-            DecoderStats& stats = decoderStatsVec[d];
-            for (std::size_t k = 0; k < stats.size(); ++k) {
-                if (static_cast<std::int64_t>(stats[k]) > diff) {
-                    out[d]++;
-                }
+        std::uint64_t out = 0;
+        DecoderStats& stats = decoderStatsVec[index];
+        for (std::size_t k = 0; k < stats.size(); ++k) {
+            if (static_cast<std::int64_t>(stats[k]) > diff) {
+                out++;
             }
         }
         return out;

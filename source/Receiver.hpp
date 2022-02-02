@@ -1,7 +1,7 @@
 #pragma once
 
 /*
-Copyright 2021 Alexander Ranaldi
+Copyright 2022 Alexander Ranaldi
 W2AXR
 alexranaldi@gmail.com
 
@@ -33,35 +33,41 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 
 #include "ring_buffer_spmc.h"
 #include "CWSL_DIGI.hpp"
+#include "CWSL_DIGI_Types.hpp"
 #include "CWSL_Utils.hpp"
 #include "ring_buffer.h"
 #include "decode_audio_buffer.h"
 #include "StringUtils.hpp"
 #include "HamUtils.hpp"
 #include "ScreenPrinter.hpp"
+#include "Instance.hpp"
 
-#include "DecoderPool.hpp"
-
+enum class ReceiverStatus : int {
+    NOT_INITIALIZED,
+    RUNNING,
+    STOPPED,
+    FINISHED,
+};
 
 class Receiver {
 public:
     Receiver(
-        const size_t idIn,
         const std::string& smnameIn,
         std::shared_ptr<ScreenPrinter> sp) : 
-        id(idIn),
+        instances(),
         iq_buffer_base_mem(nullptr),
         iq_len(0),
         smname(smnameIn),
         screenPrinter(sp),
-        terminateFlag(false),
-        twKey(tw->addThread("receiver " + std::to_string(id)))
-    {
-
+        status(ReceiverStatus::NOT_INITIALIZED),
+        terminateFlag(false) {
     }
 
     virtual ~Receiver(){
-        terminate();
+        screenPrinter->debug(receiverLog() + "Destructor");
+        if (status != ReceiverStatus::FINISHED) {
+            terminate();
+        }
         if (iq_buffer_base_mem) {
             free(iq_buffer_base_mem);
         }
@@ -102,10 +108,8 @@ public:
         return SHDR->L0;
     }
 
-    bool restart() {
-        screenPrinter->info(receiverLog() + "Receiver restarting");
-        terminate();
-        return init();
+    void addInstance(Instance* inst) {
+        instances.push_back(inst);
     }
 
     bool init()
@@ -136,10 +140,11 @@ public:
                 const size_t iqBufferByLen = sizeof(std::complex<float>) * iq_len * iq_buffer.size;
                 screenPrinter->debug(receiverLog() + "Allocating IQ buffer, size = " + std::to_string(iqBufferByLen) + " bytes");
                 iq_buffer_base_mem = malloc(iqBufferByLen);
-                memset(iq_buffer_base_mem, 0, iqBufferByLen);
                 if (!iq_buffer_base_mem) {
                     return false;
                 }
+                memset(iq_buffer_base_mem, 0, iqBufferByLen);
+
                 std::complex<float>* mem = reinterpret_cast<std::complex<float>*>(iq_buffer_base_mem);
                 for (size_t k = 0; k < iq_buffer.size; ++k) {
                     iq_buffer.recs[k] = mem;
@@ -171,29 +176,48 @@ public:
         screenPrinter->debug(receiverLog() + "Receiver terminating...");
         iq_buffer.terminate();
         terminateFlag = true;
+        finish();
+    }
+
+    void finish() {
+        screenPrinter->debug(receiverLog() + "finishing...");
+
+        screenPrinter->debug(receiverLog() + "joining threads...");
+
         if (iqThread.joinable())
         {
             iqThread.join();
         }
         SM.Close();
+        screenPrinter->debug(receiverLog() + "removing " + std::to_string(instances.size()) + " instances...");
+
+        while (!instances.empty()) {
+            instances[0]->terminate();
+            instances.erase(std::begin(instances));
+            screenPrinter->debug(receiverLog() + "instance removed");
+
+        }
+        status = ReceiverStatus::FINISHED;
+        screenPrinter->debug(receiverLog() + "finished");
+
+    }
+
+    ReceiverStatus getStatus() {
+        return status.load();
     }
 
     void readIQ() {
         screenPrinter->debug(receiverLog() + "readIQ thread started");
-        tw->threadStarted(twKey);
 
         const size_t readSize = (DWORD)iq_len * sizeof(std::complex<float>);
+
+        status = ReceiverStatus::RUNNING;
 
         while (!terminateFlag) {
 
             try {
-                tw->report(twKey);
 
                 // wait for new data from receiver. Blocks until data received
-                SM.WaitForNewData();
-                if (terminateFlag) {
-                    break;
-                }
 
                 if (iq_buffer.full()) {
                     screenPrinter->err(receiverLog() + "I/Q buffer is full!");
@@ -207,6 +231,13 @@ public:
                 // read block of data from receiver
 
                 std::vector<std::complex<float>> rawiq(readSize);
+
+                if (!SM.WaitForNewData(1000)) {
+                    break;
+                }
+                if (terminateFlag) {
+                    break;
+                }
 
                 const bool readSuccess = SM.Read((PBYTE)rawiq.data(), (DWORD)readSize);
                 if (!readSuccess) {
@@ -240,12 +271,12 @@ public:
                 screenPrinter->err(receiverLog() + std::string("Caught exception in readIQ(): ") + e.what());
             }
         }
+        status = ReceiverStatus::STOPPED;
         screenPrinter->debug(receiverLog() + "readIQ thread finished");
-        tw->threadFinished(twKey);
     }
 
     std::string receiverLog() const {
-        const std::string s = "Receiver " + smname + " " + std::to_string(id) + " ";
+        const std::string s = "Receiver " + smname + " ";
         return s;
     }
 
@@ -260,14 +291,12 @@ public:
 
     std::thread iqThread;
 
-    std::size_t id;
-
     void* iq_buffer_base_mem;
 
     std::string smname;
 
-    std::uint64_t twKey;
+    std::atomic< ReceiverStatus > status;
 
-  //  std::ofstream ofs;
+    std::vector<Instance*> instances;
 
 };

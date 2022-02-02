@@ -1,7 +1,7 @@
 #pragma once
 
 /*
-Copyright 2021 Alexander Ranaldi
+Copyright 2022 Alexander Ranaldi
 W2AXR
 alexranaldi@gmail.com
 
@@ -25,6 +25,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <list>
 #include <thread>
+#include <atomic>
 
 #include <iostream>
 #include <iomanip>
@@ -37,6 +38,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <winsock.h>
 # pragma comment(lib, "Ws2_32.lib")
 
+#include "CWSL_DIGI.hpp"
 
 using namespace std::literals; 
 using namespace std;
@@ -54,18 +56,19 @@ namespace wspr {
         std::int16_t drift;
         std::uint32_t recvfreq;
         std::int16_t dbm;
+        std::string reporterCallsign;
     };
 }
 
 class WSPRNet {
 
 public:
-    WSPRNet(const std::string& call, const std::string& grid, std::shared_ptr<ScreenPrinter> sp ) :
-    operatorCall(call),
+    WSPRNet(const std::string& grid, std::shared_ptr<ScreenPrinter> sp ) :
     operatorGrid(grid),
     screenPrinter(sp),
+    mCountSendsErrored(0),
+    mCountSendsOK(0),
     terminateFlag(false) {
-
     }
 
     virtual ~WSPRNet() {
@@ -96,7 +99,7 @@ public:
         terminateFlag = true;
     }
 
-    void handle(const std::string callsign, const int32_t snr, const float dt, const std::int16_t drift, const std::int16_t dbm, const uint32_t freq, const uint32_t rf, const uint64_t epochTime, const std::string& grid) {
+    void handle(const std::string callsign, const int32_t snr, const float dt, const std::int16_t drift, const std::int16_t dbm, const uint32_t freq, const uint32_t rf, const uint64_t epochTime, const std::string& grid, const std::string& reporterCallsign) {
 
         wspr::Report rep;
         rep.callsign = callsign;
@@ -108,6 +111,7 @@ public:
         rep.drift = drift;
         rep.recvfreq = rf;
         rep.dbm = dbm;
+        rep.reporterCallsign = reporterCallsign;
  
         mReports.enqueue(rep);
     }
@@ -156,8 +160,18 @@ public:
         return true;
     }
 
+    void sendReportWrapper(const wspr::Report& report) {
+        const bool status = sendReport(report);
+        if (status) {
+            mCountSendsOK++;
+        }
+        else {
+            mCountSendsErrored++;
+            screenPrinter->err("Failed to send WSPR report to WSPRNet");
+        }
+    }
+
     bool sendReport(const wspr::Report& report) {
-        connectSocket();
 
         std::ostringstream all;
         std::ostringstream content;
@@ -165,7 +179,7 @@ public:
         std::ostringstream request;
 
         content << "function=" << "wspr" << "&";
-        content << "rcall=" << operatorCall << "&";
+        content << "rcall=" << report.reporterCallsign << "&";
         content << "rgrid=" << operatorGrid << "&";
 
         // frequency in MHz
@@ -230,16 +244,15 @@ public:
         all << "\r\n"; // blank line between headers and body
         all << content.str();
 
-        bool sendSuccess = sendMessageWithReconnect(request.str());
+        bool sendSuccess = sendMessageWithRetry(request.str());
         if (!sendSuccess) {
-            screenPrinter->debug("Failed to send data to WSPRNet, giving up");
-            closeSocket();
+            screenPrinter->debug("Failed to send data to WSPRNet");
             return false;
         }
-        sendSuccess = sendMessageWithReconnect(all.str()); 
+
+        sendSuccess = sendMessageWithRetry(all.str());
         if (!sendSuccess) {
-            screenPrinter->debug("Failed to send data to WSPRNet, giving up");
-            closeSocket();
+            screenPrinter->debug("Failed to send data to WSPRNet");
             return false;
         }
 
@@ -261,15 +274,16 @@ public:
         }
         else {
             screenPrinter->debug("WSPRNet No response received, giving up!");
-            closeSocket();
+      //      closeSocket();
             return false;
         }
 
-        closeSocket();
+    //    closeSocket();
         return true;
     }
 
-    bool sendMessageWithReconnect(const std::string& message) {
+    bool sendMessageWithRetry(const std::string& message) {
+
         int tries = 0;
         bool sendSuccess = false;
         while (tries <= 2) {
@@ -283,8 +297,7 @@ public:
                 break; // success!
             }
             else if (bytesSent == SOCKET_ERROR) {
-                closeSocket();
-                connectSocket();
+                return false;
             }
         }
         return sendSuccess;
@@ -312,31 +325,37 @@ public:
         int received = 0;
         std::string message = "";
         int bytes = 0;
-        do {
-            char buf[8192] = {0};
-            bytes = recv(mSocket, buf, 8192, NULL);
-            screenPrinter->debug("recv() call yielded " + std::to_string(bytes) + " bytes");
-            if (bytes == SOCKET_ERROR) {
-                break;
-            }
-            if (bytes > 0) {
-                message.append(buf);
-            }
-        } 
-        while (bytes > 0);
+        char buf[8192] = {0};
+        bytes = recv(mSocket, buf, 8192, NULL);
+        screenPrinter->debug("recv() call yielded " + std::to_string(bytes) + " bytes");
+        if (bytes > 0) {
+            message.append(buf);
+        }
         return message;
     }
 
     void processingLoop() {
         while (!terminateFlag) {
-            auto report = mReports.dequeue();
-            const bool success = sendReport(report);
-            if (!success) {
-                screenPrinter->err("Failed to send WSPR report to WSPRNet");
+            screenPrinter->debug("Reports in send queue: " + std::to_string(mReports.size()));
+
+            while (!mReports.empty()) {
+                const bool connectStatus = connectSocket();
+                if (!connectStatus) { continue; }
+                auto report = mReports.dequeue();
+                sendReportWrapper(report);
+                closeSocket();
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(10000));
             if (terminateFlag) { return; }
+
+            reportStats();
         }
+    }
+
+    void reportStats() {
+        screenPrinter->debug("Count of successful reports to WSPRNet: " + std::to_string(mCountSendsOK));
+        screenPrinter->debug("Count of errored reports to WSPRNet: " + std::to_string(mCountSendsErrored));
     }
 
     std::shared_ptr<ScreenPrinter> screenPrinter;
@@ -347,6 +366,8 @@ public:
     std::thread mSendThread;
     SOCKET mSocket;
     SOCKADDR_IN target;
-    std::string operatorCall;
     std::string operatorGrid;
+
+    std::atomic_int mCountSendsOK;
+    std::atomic_int mCountSendsErrored;
 };

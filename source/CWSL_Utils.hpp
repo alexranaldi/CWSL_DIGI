@@ -11,10 +11,10 @@
 
 
 // Prefix and suffix for the shared memories names
-const std::string gPreSM = "CWSL";
-std::string gPostSM = "Band";
+static std::string gPreSM = "CWSL";
+static std::string gPostSM = "Band";
 
-std::string createSharedMemName(const int bandIndex, const int SMNumber) {
+static inline std::string createSharedMemName(const int bandIndex, const int SMNumber) {
     // create name of shared memory
     std::string Name = gPreSM + std::to_string(bandIndex) + gPostSM;
     if (SMNumber != -1) {
@@ -25,7 +25,7 @@ std::string createSharedMemName(const int bandIndex, const int SMNumber) {
 
 //////////////////////////////////////////////////////////////////////////////
 // Find the right band
-int findBand(const int64_t f, const int SMNumber) {
+static inline int findBand(const int64_t f, const int SMNumber) {
     CSharedMemory SM;
     SM_HDR h;
 

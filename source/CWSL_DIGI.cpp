@@ -52,9 +52,15 @@ along with CWSL_DIGI.If not, see < https://www.gnu.org/licenses/>.
 
 #include "SharedMemory.h"
 
+std::atomic_bool syncThreadTerminateFlag = false;
+
+#include "CWSL_DIGI.hpp"
+
+#include "OutputHandler.hpp"
 #include "Instance.hpp"
 #include "Receiver.hpp"
 #include "Stats.hpp"
+#include "DecoderPool.hpp"
 
 #include "PSKReporter.hpp"
 #include "RBNHandler.hpp"
@@ -63,7 +69,7 @@ along with CWSL_DIGI.If not, see < https://www.gnu.org/licenses/>.
 #include "boost/program_options.hpp"
 
 #include "ScreenPrinter.hpp"
-#include "OutputHandler.hpp"
+#include "Decoder.hpp"
 
 std::string badMessageLogFile = "";
 
@@ -82,17 +88,271 @@ bool useWSPRNet = false;
 std::string operatorCallsign = "";
 std::string operatorLocator = "";
 
-std::vector<std::unique_ptr<Instance>> instances;
+//std::vector<std::unique_ptr<Instance>> instances;
 
 std::shared_ptr<DecoderPool> decoderPool;
 std::shared_ptr<OutputHandler> outputHandler;
 std::shared_ptr<ScreenPrinter> printer;
 std::shared_ptr<Stats> statsHandler;
 
+DecoderVec decoders;
+
+SyncPredicates preds;
+
+float ftAudioScaleFactor = 0.90f;
+float wsprAudioScaleFactor = 0.20f;
+
+static inline bool setupDecoder(Decoder& decoder, size_t instanceId) {
+
+    printer->debug("Calibrated instance frequency: " + std::to_string(decoder.getFreqCalibrated()));
+
+    const int nMem = findBand(static_cast<std::int64_t>(decoder.getFreqCalibrated()), decoder.getsmNum());
+    std::shared_ptr<Receiver> receiver = nullptr;
+    if (-1 == nMem) {
+        printer->debug("Unable to open CWSL shared memory at the specified frequency. Bad frequency or sharedmem specified?");
+        printer->debug("Note that frequency calibration may shift the expected frequency outside of what is expected!");
+        return false;
+    }
+    else {
+        const std::string smname = createSharedMemName(nMem, decoder.getsmNum());
+        auto it = receivers.find(smname);
+        if (it != receivers.end()) {
+            printer->debug("Using existing receiver interface");
+            receiver = it->second;
+        }
+        else {
+            printer->debug("Creating receiver interface");
+            receivers.emplace(smname, std::make_shared<Receiver>(
+                smname,
+                printer
+                ));
+            receiver = receivers[smname];
+            receiver->init();
+        }
+        printer->print("Creating Instance for frequency " +
+            std::to_string(decoder.getFreq()) + " mode " + decoder.getMode(), LOG_LEVEL::INFO);
+
+        if (!decoder.getInstance()) {
+            std::shared_ptr<SyncPredicate> pred = preds.createPredicate(decoder.getMode());
+
+            std::unique_ptr<Instance> inst = std::make_unique<Instance>(
+                receiver,
+                instanceId,
+                pred,
+                decoder.getFreq(),
+                decoder.getFreqCalibrated(),
+                decoder.getMode(),
+                decoder.getReporterCallsign(),
+                Wave_SR,
+                ftAudioScaleFactor,
+                wsprAudioScaleFactor,
+                printer,
+                decoderPool
+                );
+
+            decoder.setInstance(std::move(inst));
+        }
+        else {
+            decoder.getInstance()->setReceiver(receiver);
+        }
+        
+        printer->print("Initializing instance ", LOG_LEVEL::DEBUG);
+        try {
+            const bool status = decoder.getInstance()->init();
+            if (!status) {
+                printer->err("Failed to initialize decoder instance");
+                return false;
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print(e);
+            return false;
+        }
+    }
+    return true;
+}
+
+static inline void waitForTimeQ65_30(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    int goSec = -1;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            std::time_t t = std::time(nullptr);
+            tm* ts = std::gmtime(&t);
+            if (go && ts->tm_sec == goSec) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = ts->tm_sec == 0 || ts->tm_sec == 30;
+            if (go) {
+                printer->print("Signalling beginning of Q65-30 interval...", LOG_LEVEL::DEBUG);
+                goSec = ts->tm_sec;
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print("waitForTimeQ65_30", e);
+        }
+    } // while
+    printer->debug("Q65-30 Synchronization thread exiting");
+}
+
+static inline void waitForTimeJT65(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    int goSec = -1;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            std::time_t t = std::time(nullptr);
+            tm* ts = std::gmtime(&t);
+            if (go && ts->tm_sec == goSec) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = ts->tm_sec == 0;
+            if (go) {
+                printer->print("Signalling beginning of JT65 interval...", LOG_LEVEL::DEBUG);
+                goSec = ts->tm_sec;
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print("waitForTimeJT65", e);
+        }
+    } // while
+    printer->debug("JT65 Synchronization thread exiting");
+}
+
+static inline void waitForTimeFT8(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    int goSec = -1;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            std::time_t t = std::time(nullptr);
+            tm* ts = std::gmtime(&t);
+            if (go && ts->tm_sec == goSec) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = ts->tm_sec == 0 || ts->tm_sec == 15 || ts->tm_sec == 30 || ts->tm_sec == 45;
+            if (go) {
+                printer->print("Signalling beginning of FT8 interval...", LOG_LEVEL::DEBUG);
+                goSec = ts->tm_sec;
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print("waitForTimeFT8", e);
+        }
+    } // while
+    printer->debug("FT8 Synchronization thread exiting");
+}
+
+
+static inline void waitForTimeWSPR(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    SYSTEMTIME time;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            GetSystemTime(&time);
+            const std::uint16_t min = static_cast<std::uint16_t>(time.wMinute);
+            const bool minFlag = (min & 1) == 0;
+            const bool secFlag = time.wSecond == 0;
+            if (minFlag && secFlag && go) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = minFlag && secFlag;
+            if (go) {
+                printer->print("Signalling beginning of WSPR interval...", LOG_LEVEL::DEBUG);
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            } //if
+            else if (minFlag || (!minFlag && time.wSecond <= 55)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        } // try
+        catch (const std::exception& e) {
+            printer->print("waitForTimeWSPR", e);
+        } // catch
+    } // while
+    printer->debug("WSPR Synchronization thread exiting");
+}
+
+
+static inline void waitForTimeFT4(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    SYSTEMTIME time;
+    int goSec = -1;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            GetSystemTime(&time);
+            const WORD s = time.wSecond;
+            if (go && s == goSec) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = false;
+            switch (s) {
+            case 0:
+            case 15:
+            case 30:
+            case 45:
+                go = true;
+                break;
+            case 7:
+            case 22:
+            case 37:
+            case 52:
+                while (time.wMilliseconds < 300 && s == time.wSecond) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(400 - time.wMilliseconds));
+                    GetSystemTime(&time);
+                }
+                go = true;
+                break;
+            default:
+                break;
+            } // switch
+            if (go) {
+                printer->print("Beginning FT4 interval...", LOG_LEVEL::DEBUG);
+                goSec = time.wSecond;
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        }
+        catch (const std::exception& e) {
+            printer->print("waitForTimeFT4", e);
+        }
+    } // while
+    printer->debug("FT4 Synchronization thread exiting");
+}
+
 
 void cleanup() {
-    for (size_t k = 0; k < instances.size(); ++k) {
-        instances[k]->terminate();
+    for (size_t k = 0; k < decoders.size(); ++k) {
+        decoders[k].terminate();
     }
     decoderPool->terminate();
     if (reporter) { reporter->terminate(); }
@@ -106,12 +366,10 @@ void cleanup() {
     std::this_thread::sleep_for(std::chrono::seconds(1));
 }
 
-void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrinter> printer, std::vector<std::unique_ptr<Instance>>& instances, const int reportingInterval, const std::uint64_t twKey) {
-    tw->threadStarted(twKey);
+void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrinter> printer, std::vector<Decoder>& instances, const int reportingInterval) {
     while (!syncThreadTerminateFlag) {
         for (int k = 0; k < reportingInterval * 5; ++k) {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            tw->report(twKey);
         }
 
         try {
@@ -121,24 +379,33 @@ void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrin
             printer->print(e);
             continue;
         }
-        tw->report(twKey);
 
         try {
-            auto v1Min = statsHandler->getCounts(60);
-            tw->report(twKey);
-            auto v5Min = statsHandler->getCounts(300);
-            tw->report(twKey);
-            auto v1Hr = statsHandler->getCounts(3600);
-            tw->report(twKey);
-            auto v24Hr = statsHandler->getCounts(86400);
-            tw->report(twKey);
             std::stringstream hdr;
-            hdr << std::setfill(' ') << std::left << std::setw(10) << "Instance" << std::setw(12) << "Frequency" << std::setw(8) << "Mode" << std::setw(8) << "24 Hour" << std::setw(8) << "1 Hour" << std::setw(8) << "5 Min" << std::setw(8) << "1 Min";
+            hdr << std::setfill(' ') << std::left << std::setw(10) << "Instance" << std::setw(16) << "Status" << std::setw(12) << "Frequency" << std::setw(8) << "Mode" << std::setw(8) << "24 Hour" << std::setw(8) << "1 Hour" << std::setw(8) << "5 Min" << std::setw(8) << "1 Min";
             printer->print(hdr.str());
             for (std::size_t k = 0; k < instances.size(); ++k) {
-                const auto mode = instances[k]->getMode();
+                auto v1Min = statsHandler->getCounts(k, 60);
+                auto v5Min = statsHandler->getCounts(k, 300);
+                auto v1Hr = statsHandler->getCounts(k, 3600);
+                auto v24Hr = statsHandler->getCounts(k, 86400);
+                const auto mode = instances[k].getMode();
+                std::string status;
+
+                if (instances[k].getStatus() == InstanceStatus::RUNNING) {
+                    status = "Running";
+                }
+                else if (instances[k].getStatus() == InstanceStatus::FINISHED) {
+                    status = "Inactive";
+                }
+                else if (instances[k].getStatus() == InstanceStatus::STOPPED) {
+                    status = "Stopped";
+                }
+                else if (instances[k].getStatus() == InstanceStatus::NOT_INITIALIZED) {
+                    status = "Uninitialized";
+                }
                 std::stringstream s;
-                s << std::setfill(' ') << std::left << std::setw(10) << std::to_string(k) << std::setw(12) << std::to_string(instances[k]->getFrequency()) << std::setw(8) << mode << std::setw(8) << std::to_string(v24Hr[k]) << std::setw(8) << std::to_string(v1Hr[k]) << std::setw(8) << std::to_string(v5Min[k]) << std::setw(8) << std::to_string(v1Min[k]);
+                s << std::setfill(' ') << std::left << std::setw(10) << std::to_string(k) << std::setw(16) << status << std::setw(12) << std::to_string(instances[k].getFreq()) << std::setw(8) << mode << std::setw(8) << std::to_string(v24Hr) << std::setw(8) << std::to_string(v1Hr) << std::setw(8) << std::to_string(v5Min) << std::setw(8) << std::to_string(v1Min);
                 printer->print(s.str());
             }
         }
@@ -146,9 +413,7 @@ void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrin
             printer->print(e);
             continue;
         }
-        tw->report(twKey);
     }
-    tw->threadFinished(twKey);
 
 }
 
@@ -169,7 +434,8 @@ int main(int argc, char **argv)
     desc.add_options()
         ("help", "produce help message")
         ("configfile", po::value<std::string>(), "path and file name of configuration file")
-        ("decoders.decoder", po::value<std::vector<std::string>>()->multitoken(), "freq, mode, shmem, freqcal")
+        ("decoders.decoder", po::value<std::vector<std::string>>()->multitoken(), "freq, mode, shmem, freqcal, callsign")
+//        ("radio.extiodll", po::value<std::string>(), "path and file name of your SDRs extio.dll, or blank if using CWSL")
         ("radio.freqcalibration", po::value<double>(), "frequency calibration factor in PPM, default 1.0000000000")
         ("radio.sharedmem", po::value<int>(), "CWSL shared memory interface number to use, default -1")
         ("reporting.pskreporter", po::value<bool>(), "Send spots to PSK Reporter, default false")
@@ -177,6 +443,7 @@ int main(int argc, char **argv)
         ("reporting.rbn", po::value<bool>(), "enables sending spots to RBN Aggregator, default false")
         ("reporting.aggregatorport", po::value<int>(), "port number for datagrams sent to RBN Aggregator")
         ("reporting.aggregatorip", po::value<std::string>(), "ip address for RBN Aggregator, default 127.0.0.1")
+        ("reporting.ignoredcalls", po::value<std::vector<std::string>>()->multitoken(), "list of callsigns to ignore")
         ("operator.callsign", po::value<std::string>(), "operator callsign - required")
         ("operator.gridsquare", po::value<std::string>(), "operator grid square locator - required")
         ("wsjtx.decoderburden", po::value<float>(), "adds extra JT9 and WSPRD instances for decoding. default 1.0")
@@ -295,6 +562,13 @@ int main(int argc, char **argv)
 
 
     // Parse radio settings
+    bool bUseExtioDLL = false;
+    std::string extioPath;
+    if (vm.count("radio.extiodll")) {
+        extioPath = vm["radio.extiodll"].as<std::string>();
+        printer->print("ExtIO DLL path: " + extioPath);
+        bUseExtioDLL = true;
+    }
 
     int SMNumber = -1;
     if (vm.count("radio.sharedmem")) {
@@ -308,6 +582,25 @@ int main(int argc, char **argv)
         printer->print("Frequency Calibration Factor: " + std::to_string(freqCalGlobal));
     }
 
+    // parse operator info
+
+    if (vm.count("operator.callsign")) {
+        operatorCallsign = vm["operator.callsign"].as<std::string>();
+    }
+    else {
+        printer->err("Missing operator.callsign input argument!");
+        cleanup();
+        return EXIT_FAILURE;
+    }
+    if (vm.count("operator.gridsquare")) {
+        operatorLocator = vm["operator.gridsquare"].as<std::string>();
+    }
+    else {
+        printer->print("Missing operator.gridsquare input argument!");
+        cleanup();
+        return EXIT_FAILURE;
+    }
+
     // Parse decoders
 
     int numFT4Decoders = 0;
@@ -316,17 +609,13 @@ int main(int argc, char **argv)
     int numQ65_30Decoders = 0;
     int numJT65Decoders = 0;
 
-    using Decoder = std::tuple<std::uint32_t, std::string, int, double>;
-    using DecoderVec = std::vector<Decoder>;
-    DecoderVec decoders;
-
     if (vm.count("decoders.decoder")) {
         std::vector<std::string> decodersRawVec = vm["decoders.decoder"].as<std::vector<std::string>>();
         printer->print("Found " + std::to_string(decodersRawVec.size()) + " decoder entries");
         for (size_t k = 0; k < decodersRawVec.size(); k++) {
             const std::string& rawLine = decodersRawVec[k];
             auto decoderVecLine = splitStringByDelim(rawLine, ' ');
-            if (decoderVecLine.size() != 2 && decoderVecLine.size() != 3 && decoderVecLine.size() != 4) {
+            if (decoderVecLine.size() != 2 && decoderVecLine.size() != 3 && decoderVecLine.size() != 4 && decoderVecLine.size() != 5) {
                 printer->err("Error parsing decoder line: " + rawLine);
                 cleanup();
                 return EXIT_FAILURE;
@@ -354,15 +643,34 @@ int main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
             int smnum = SMNumber;
-            if (decoderVecLine.size() >= 3) {
-                smnum = std::stoi(decoderVecLine[2]);
+            if (bUseExtioDLL) {
+                printer->info("Loading Extio DLL library: " + extioPath);
+                HMODULE extioModH = LoadLibraryA(extioPath.c_str());
+                if (!extioModH) {
+                    printer->err("Error loading Extio DLL");
+                    return EXIT_FAILURE;
+                }
+                printer->info("Loaded Extio DLL library");
+            }
+            else {
+                if (decoderVecLine.size() >= 3) {
+                    smnum = std::stoi(decoderVecLine[2]);
+                }
             }
             double decoder_freqcal = 1.0;
             if (decoderVecLine.size() >= 4) {
                 decoder_freqcal = std::stod(decoderVecLine[3]);
             }
-            Decoder tu = std::make_tuple(freq, mode, smnum, decoder_freqcal);
-            decoders.push_back(tu);
+            std::string decoder_callsign = operatorCallsign;
+            if (decoderVecLine.size() >= 5) {
+                if (mode != "WSPR") {
+                    printer->err("Callsigns are only supported per-decoder for WSPR decoders");
+                    return EXIT_FAILURE;
+                }
+                decoder_callsign = decoderVecLine[4];
+            }
+            const FrequencyHz decoderFreqCalibrated = static_cast<FrequencyHz>(freq / (freqCalGlobal * decoder_freqcal));
+            decoders.emplace_back(freq, decoderFreqCalibrated, mode, smnum, decoder_freqcal, decoder_callsign);
         }
     }
     else {
@@ -463,7 +771,6 @@ int main(int argc, char **argv)
         }
     }
 
-    float ftAudioScaleFactor = 0.90f;
     if (vm.count("wsjtx.ftaudioscalefactor")) {
         ftAudioScaleFactor = vm["wsjtx.ftaudioscalefactor"].as<float>();
         if (ftAudioScaleFactor > 1.0f) {
@@ -478,7 +785,6 @@ int main(int argc, char **argv)
         }
     }
 
-    float wsprAudioScaleFactor = 0.20f;
     if (vm.count("wsjtx.wspraudioscalefactor")) {
         wsprAudioScaleFactor = vm["wsjtx.wspraudioscalefactor"].as<float>();
         if (wsprAudioScaleFactor > 1.0f) {
@@ -550,6 +856,7 @@ int main(int argc, char **argv)
 
     // Parse reporting options
 
+
     reporter = nullptr;
     if (vm.count("reporting.pskreporter")) {
         usePSKReporter = vm["reporting.pskreporter"].as<bool>();
@@ -578,32 +885,21 @@ int main(int argc, char **argv)
         rbnIpAddr = vm["reporting.aggregatorip"].as<std::string>();
     }
 
-    if (vm.count("operator.callsign")) {
-        operatorCallsign = vm["operator.callsign"].as<std::string>();
-    }
-    else {
-        if (usePSKReporter) {
-            printer->err("Missing operator.callsign input argument!");
-            cleanup();
-            return EXIT_FAILURE;
-        }
-    }
-    if (vm.count("operator.gridsquare")) {
-         operatorLocator = vm["operator.gridsquare"].as<std::string>();
-    }
-    else {
-        if (usePSKReporter) {
-            printer->print("Missing operator.gridsquare input argument!");
-            cleanup();
-            return EXIT_FAILURE;
-        }
-    }
-    
-    tw = std::make_shared<ThreadWatcher>();
-
     statsHandler = std::make_shared<Stats>(86400, static_cast<std::uint32_t>(decoders.size()));
 
-    outputHandler = std::make_shared<OutputHandler>(printHandledReports, badMessageLogFile, decodesFileName, printer, statsHandler);
+    outputHandler = std::make_shared<OutputHandler>(printHandledReports, badMessageLogFile, decodesFileName, printer, statsHandler, decoders);
+
+    if (vm.count("reporting.ignoredcalls")) {
+        std::vector<std::string> ignoredRawVec = vm["reporting.ignoredcalls"].as<std::vector<std::string>>();
+        for (size_t k = 0; k < ignoredRawVec.size(); k++) {
+            const std::string& rawLine = ignoredRawVec[k];
+            auto vecLine = splitStringByDelim(rawLine, ' ');
+            for (const auto& call : vecLine) {
+                printer->info("Will ignore callsign: " + call);
+                outputHandler->ignoreCallsign(call);
+            }
+        }
+    }
 
     decoderPool = std::make_shared<DecoderPool>(transferMethod, keepWavFiles, printJT9Output, numJT9Instances, maxWSPRDInstances, numjt9threads, decodedepth, wsprCycles, highestDecodeFreq, binPath, maxDataAge, wavPath, printer, outputHandler);
     const bool decStat = decoderPool->init();
@@ -625,7 +921,7 @@ int main(int argc, char **argv)
 
     if (useWSPRNet) {
         printer->print("Initializing WSPRNet interface");
-        wsprNet = std::make_shared<WSPRNet>(operatorCallsign, operatorLocator, printer);
+        wsprNet = std::make_shared<WSPRNet>(operatorLocator, printer);
         const bool res = wsprNet->init();
         if (!res) {
             printer->err("Failed to initialize WSPRNet!");
@@ -655,162 +951,49 @@ int main(int argc, char **argv)
         outputHandler->setRBNHandler(rbn);
     }
 
+
     // create time signalling threads
-    SyncPredicates ft8Preds(numFT8Decoders);
+
     std::thread ft8SignalThread;
     if (numFT8Decoders) {
-        const auto twKey = tw->addThread("ft8SignalThread");
-        ft8SignalThread = std::thread(&waitForTimeFT8, printer, std::ref(ft8Preds), twKey);
+        ft8SignalThread = std::thread(&waitForTimeFT8, printer, std::ref(preds.ft8Preds));
         ft8SignalThread.detach();
     }
-    SyncPredicates ft4Preds(numFT4Decoders);
+
     std::thread ft4SignalThread;
     if (numFT4Decoders) {
-        const auto twKey = tw->addThread("ft4SignalThread");
-        ft4SignalThread = std::thread(&waitForTimeFT4, printer, std::ref(ft4Preds), twKey);
+        ft4SignalThread = std::thread(&waitForTimeFT4, printer, std::ref(preds.ft4Preds));
         ft4SignalThread.detach();
     }
-    SyncPredicates wsprPreds(numWSPRDecoders);
+
     std::thread wsprSignalThread;
     if (numWSPRDecoders) {
-        const auto twKey = tw->addThread("wsprSignalThread");
-        wsprSignalThread = std::thread(&waitForTimeWSPR, printer,  std::ref(wsprPreds), twKey);
+        wsprSignalThread = std::thread(&waitForTimeWSPR, printer, std::ref(preds.wsprPreds));
         wsprSignalThread.detach();
     }
-    SyncPredicates q65_30Preds(numQ65_30Decoders);
     std::thread q65_30SignalThread;
     if (numQ65_30Decoders) {
-        const auto twKey = tw->addThread("q65_30SignalThread");
-        q65_30SignalThread = std::thread(&waitForTimeQ65_30, printer, std::ref(q65_30Preds), twKey);
+        q65_30SignalThread = std::thread(&waitForTimeQ65_30, printer, std::ref(preds.q65_30Preds));
         q65_30SignalThread.detach();
     }
-    SyncPredicates JT65Preds(numJT65Decoders);
     std::thread JT65SignalThread;
     if (numJT65Decoders) {
-        const auto twKey = tw->addThread("JT65SignalThread");
-        JT65SignalThread = std::thread(&waitForTimeJT65, printer, std::ref(JT65Preds), twKey);
+        JT65SignalThread = std::thread(&waitForTimeJT65, printer, std::ref(preds.jt65Preds));
         JT65SignalThread.detach();
     }
+
 
     // USB/LSB.  USB = 1, LSB = 0
     constexpr int USB = 1;
 
-    int ft8PredIndex = 0;
-    int ft4PredIndex = 0;
-    int wsprPredIndex = 0;
-    int q65_30PredIndex = 0;
-    int JT65PredIndex = 0;
-
     for (size_t k = 0; k < decoders.size(); ++k) {
-        const auto& decoder = decoders[k];
-        const auto& f = std::get<0>(decoder);
-        const auto& mode = std::get<1>(decoder);
-        const auto& smnum = std::get<2>(decoder);
-        const auto& d_freqcal = std::get<3>(decoder);
-
-        if (mode != "FT8" && mode != "FT4" && mode != "WSPR" && mode != "Q65-30" && mode != "JT65") {
-            printer->err("Unknown mode specified: " + mode);
-            cleanup();
-            return EXIT_FAILURE;
-        }
-
-        const FrequencyHz instanceFreqCalibrated = static_cast<FrequencyHz>(f / (freqCalGlobal * d_freqcal));
-        printer->debug("Calibrated instance frequency: " + std::to_string(instanceFreqCalibrated));
-
-        const int nMem = findBand(static_cast<std::int64_t>(instanceFreqCalibrated), smnum);
-        if (-1 == nMem) {
-            printer->err("Unable to open CWSL shared memory at the specified frequency. Bad frequency or sharedmem specified.");
-            printer->err("Note that frequency calibration may shift the expected frequency outside of what is expected!");
-            cleanup();
-            return EXIT_FAILURE;
-        }
-        const std::string smname = createSharedMemName(nMem, smnum);
-        std::shared_ptr<Receiver> receiver = nullptr;
-        auto it = receivers.find(smname);
-        if (it != receivers.end()) {
-            printer->debug("Using existing receiver interface");
-            receiver = it->second;
-        }
-        else {
-            printer->debug("Creating receiver interface");
-            receivers.emplace(smname, std::make_shared<Receiver>(
-                k,
-                smname,
-                printer
-                ));
-            receiver = receivers[smname];
-            receiver->init();
-        }
-
-        printer->print("Creating Instance " + std::to_string(k) +
-            " of " + std::to_string(decoders.size()-1) + " for frequency " + 
-            std::to_string(f) + " mode " + mode, LOG_LEVEL::INFO);
-
-        std::shared_ptr<std::atomic_bool> pred = nullptr;
-        if (mode == "FT8") {
-            pred = ft8Preds.preds[ft8PredIndex];
-            ft8PredIndex++;
-        }
-        else if (mode == "FT4") {
-            pred = ft4Preds.preds[ft4PredIndex];
-            ft4PredIndex++;
-        }
-        else if (mode == "WSPR") {
-            pred = wsprPreds.preds[wsprPredIndex];
-            wsprPredIndex++;
-        }
-        else if (mode == "Q65-30") {
-            pred = q65_30Preds.preds[q65_30PredIndex];
-            q65_30PredIndex++;
-        }
-        else if (mode == "JT65") {
-            pred = JT65Preds.preds[JT65PredIndex];
-            JT65PredIndex++;
-        }
-        else {
-            printer->err("Unhandled mode: " + mode);
-            cleanup();
-            return EXIT_FAILURE;
-        }
-
-        std::unique_ptr<Instance> instance = std::make_unique<Instance>(
-            receiver,
-            k,
-            pred,
-            f,
-            instanceFreqCalibrated,
-            mode,
-            Wave_SR,
-            ftAudioScaleFactor, 
-            wsprAudioScaleFactor,
-            printer,
-            decoderPool
-        );
-
-        instances.push_back(std::move(instance));
-
-        printer->print("Initializing instance " + std::to_string(k + 1) + " of " + std::to_string(decoders.size()), LOG_LEVEL::DEBUG);
-        try {
-            const bool status = instances.back()->init();
-            if (!status) {
-                printer->err("Failed to initialize decoder instance");
-                cleanup();
-                return EXIT_FAILURE;
-            }
-        }
-        catch (const std::exception& e) {
-            printer->print(e);
-            cleanup();
-            return EXIT_FAILURE;
-        }
+        auto& decoder = decoders[k];
+        setupDecoder(decoder, k);
     }
 
-    const std::uint64_t statstwKey = tw->addThread("reportStats");
-    std::thread statsThread = std::thread(&reportStats, std::ref(statsHandler), printer, std::ref(instances), statsReportingInterval, statstwKey);
+    std::thread statsThread = std::thread(&reportStats, std::ref(statsHandler), printer, std::ref(decoders), statsReportingInterval);
     SetThreadPriority(statsThread.native_handle(), THREAD_PRIORITY_IDLE);
-    tw->setAllowedDelta(statstwKey, 5000);
     statsThread.detach();
-    tw->threadStarted(statstwKey); // this thread can be slow to start, so report it as started here as well as in the thread itself
 
     //
     //  Main Loop
@@ -818,40 +1001,34 @@ int main(int argc, char **argv)
 
     printer->print("Main loop starting");
 
-    // sleep on startup so all other threads have a chance to do their initial work and report.
-    std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
+    int counter = 0;
 
-    constexpr float MAIN_LOOP_TICKS_S = 1000 / MAIN_LOOP_SLEEP_MS;
-    // latch prevents log spam
-    std::vector<uint64_t> latch(tw->numThreads());
     while (1) {
-        std::fill(latch.begin(), latch.end(), 0);
-      //   printer->debug("Checking on threads. Thread count=" + std::to_string(tw->numThreads()));
-        for (size_t k = 0; k < tw->numThreads(); ++k) {
-            const std::pair<bool, std::int64_t> p = tw->check(k);
-            if (!p.first && !latch[k]) {
-                printer->err("Thread failed to report on time! name=" + tw->getName(k) + " index=" + std::to_string(k) + " time delta=" + std::to_string(p.second) + "ms");
-                auto status = tw->getStatus(k);
-                if (ThreadStatus::Finished == status) {
-                    printer->err("Thread has finished status! index=" + std::to_string(k));
-                }
-                latch[k]++;
-            }
-            else if (p.first) {
-                if (latch[k]) {
-                    printer->info("Thread is reporting again. index=" + std::to_string(k));
-                }
-                latch[k] = 0;
-       //         printer->trace("Thread reported on time. name=" + tw->getName(k) + " index=" + std::to_string(k) + " time delta=" + std::to_string(p.second) + "ms");
-            }
-            else if (!p.first) {
-                if (latch[k] > MAIN_LOOP_TICKS_S * 5) {
-                    latch[k] = 0;
-                }
+        std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
+        std::vector< std::string > receiversToErase;
+        for (auto it : receivers) {
+            auto& r = it.second;
+            if (r->getStatus() == ReceiverStatus::STOPPED) {
+                r->terminate();
+                receiversToErase.push_back(it.first);
             }
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
+        for (auto&& key : receiversToErase) {
+            receivers.erase(key);
+        }
+        if (counter == 10) {
+            for (size_t k = 0; k < decoders.size(); ++k) {
+                auto& d = decoders[k];
+                auto s = d.getStatus();
+                if (s == InstanceStatus::FINISHED) {
+                    setupDecoder(d, k);
+                }
+            }
+            counter = 0;
+        }
+        else {
+            counter++;
+        }
     }
 
     std::cout << "Exiting" << std::endl;

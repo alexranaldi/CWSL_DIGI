@@ -67,13 +67,13 @@ static inline std::vector<std::string> splitStringByDelim(const std::string& inp
     return v;
 }
 
-char asciitolower(char in) {
+static inline char asciitolower(char in) {
     if (in <= 'Z' && in >= 'A')
         return in - ('Z' - 'z');
     return in;
 }
 
-std::string ws2s(const std::wstring& wstr)
+static inline std::string ws2s(const std::wstring& wstr)
 {
     using convert_typeX = std::codecvt_utf8<wchar_t>;
     std::wstring_convert<convert_typeX, wchar_t> converterX;

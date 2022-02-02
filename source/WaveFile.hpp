@@ -37,7 +37,7 @@ PACK(struct WavHdr
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Open wav file
-HANDLE wavOpen(const std::string& filename, WavHdr& Hdr, const bool isTemp)
+inline HANDLE wavOpen(const std::string& filename, WavHdr& Hdr, const bool isTemp)
 {
     LPCVOID h;
     DWORD hl, l;
@@ -84,7 +84,7 @@ HANDLE wavOpen(const std::string& filename, WavHdr& Hdr, const bool isTemp)
     return File;
 }
 
-void waveWrite(const std::vector<std::int16_t>& audioBuffer, const std::string& fileName) {
+inline void waveWrite(const std::vector<std::int16_t>& audioBuffer, const std::string& fileName) {
    // screenPrinter->print("Beginning wave file generation...", LOG_LEVEL::DEBUG);
 
     const uint64_t startTime = std::chrono::system_clock::now().time_since_epoch() / std::chrono::milliseconds(1);
@@ -124,8 +124,7 @@ void waveWrite(const std::vector<std::int16_t>& audioBuffer, const std::string& 
     //        screenPrinter->err("Error writing wave file data");
         }
     }
-    catch (const std::exception& e) {
-    //    screenPrinter->print("WriteFile", e);
+    catch (const std::exception&) {
     }
 
     CloseHandle(File);
