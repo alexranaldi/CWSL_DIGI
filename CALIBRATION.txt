@@ -1,0 +1,21 @@
+CWSL_DIGI uses the CWSL interface via CW Skimmer to receive I/Q data from the SDR. CW Skimmer's frequency calibration configuration setting will effect CWSL_DIGI and other applications using CWSL. CWSL_DIGI provides a global frequency calibration value in the configuration within the [radio] section, which applies to all decoders in CWSL_DIGI. In addition, a frequency calibration factor may be applied to each decoder individually, on the decoders line. The final calibration value for a given decoder is the product of the global frequency calibration factor and the decoder's frequency calibration factor. CW Skimmer's frequency calibration configuration setting may have its own impact. In testing, CW Skimmer's frequency calibration setting was found to impact downstream CWSL applications in a non-linear fashion.
+
+To obtain the calibration factors for CWSL_DIGI for own station, I used a combination of WWV and WSPRNet data. In the absence of CW Skimmer, my QS1R was found to have a linear frequency offset that could be corrected at 5MHz, 10MHz and 15MHz with a single factor. With CW Skimmer running, that offset became non-linear, and I needed to apply frequency factors per band. The reason is not entirely understood. WSPRNet provides reports to the nearest 1 Hz, and a simple average may be adequate to derive a suitable calibration factor for each band.
+
+To find a calibration factor for 20m using WSPR:
+1. Turn off all reporting in CWSL_DIGI to prevent posting bad spots.
+2. Enable one WSPR decoder for the band of interest. Make sure no calibration factor is specified. e.g.,
+decoder=14095600 WSPR
+3. Wait for a few WSPR spots to appear in the CWSL_DIGI window.  Note the callsign and frequency.
+4. Visit http://www.wsprnet.org/drupal/wsprnet/spotquery and enter the callsign of one of the spots.
+5. Compute the calibration factor by dividing. The CWSL_DIGI frequency is the divisor.
+
+As an example:
+WSPRNet frequency for a given spot: 14097050 (eye-ball average from what is reported on page)
+CWSL_DIGI reported frequency for same spot: 14097117
+14097050/14097117 = 0.999995247255166
+The frequency calibration factor for 20m is thus 0.9999952
+
+6. Update the decoder lines for the band, as needed.
+
+W2AXR

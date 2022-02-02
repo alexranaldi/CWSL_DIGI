@@ -1,0 +1,16 @@
+0.84
+Allow bands to be inactive (no shared memory) to support band rotation
+
+0.83
+A separate spotter callsign can now be specified per WSPR decoder
+A list of callsigns to ignore can be specified in the config file
+Fixed bug that caused WSPR spots to be reported late to WSPRNet, sometimes by many hours
+Reworked statistics reporting code to be more efficient
+
+0.82
+Add support for JT65.
+Fix crash in Decoder Instance caused by missing lock in SafeQueue. Found by NA3M.
+Handle FT4 and FT8 messages of six characters. E.g., "CQ W6L". Previously was discarded.
+
+0.81
+First public release.
