@@ -30,13 +30,16 @@ CWSL_DIGI is configured by editing the config.ini file that comes with CWSL_DIGI
 4. Enable at least one decoder. It is suggested to start with a single decoder, and once working, enable additional decoders.
     1. Find the [decoders] section in the file.
     2. To enable a decoder, remove the # character at the beginning of the line. For example, to enable 10m FT8:
+    
 ```
 # 10m
 #decoder=28180000 FT4
 decoder=28074000 FT8
 #decoder=28076000 JT65
 ```
-The bandwidth selected in CW Skimmer Server and the center frequencies for each band may limit which frequencies CWSL_DIGI can access. CWSL_DIGI has access to only the bands and frequencies setup in CW Skimmer Server, which must be kept in mind when enabling decoders.
+
+NOTE: The bandwidth selected in CW Skimmer Server and the center frequencies for each band may limit which frequencies CWSL_DIGI can access. CWSL_DIGI has access to only the bands and frequencies setup in CW Skimmer Server, which must be kept in mind when enabling decoders.
+
 5. Enable reporting to spotting networks, if desired.
     1. Find the [reporting] section.
     2. Set *pskreporter*, *rbn* and *wsprnet* to true to enable spotting, as desired. Note that Reverse Beacon Network additionally requires Aggregator - additional steps are detailed below.
