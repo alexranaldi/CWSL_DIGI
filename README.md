@@ -9,6 +9,13 @@ Problem reports and feature requests can be sent to W2AXR, alexranaldi@gmail.com
 CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 
 
+## Latest ##
+
+The latest version is 0.85. 
+[Download Windows 64-bit zip] (./bin/CWSL_DIGI-0.85-release.zip)
+
+Notable enhancements in 0.85 include proper decoding of contest messages, and providing band information to RBN Aggregator such that it is displayed on RBN's website.
+
 ## Installation ##
 
 1. Install and configure [CW Skimmer Server](http://www.dxatlas.com/SkimServer/). The detailed steps can be found on the CW Skimmer Server website.
