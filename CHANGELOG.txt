@@ -1,3 +1,7 @@
+0.85
+Add UDP message to provide active band information to RBN Aggregator
+Add ability to process contest FT4 and FT8 messages
+
 0.84
 Allow bands to be inactive (no shared memory) to support band rotation
 
