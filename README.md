@@ -25,12 +25,11 @@ CWSL_DIGI is configured by editing the config.ini file that comes with CWSL_DIGI
 1. Open config.ini in your favorite text editor, such as notepad or Notepad++.
 2. Any line beginning with a # character is a comment and will be ignored by CWSL_DIGI. The file contains comments to guide the user in editing. 
 3. Set the operator callsign and grid square.
-Most importantly, set the Operator Callsign, and Grid Square.
-a. Replace *MYCALL* with your callsign.
-b. Replace *AB01xy* with your 6 character grid square.
+    1. Replace *MYCALL* with your callsign.
+    2. Replace *AB01xy* with your 6 character grid square.
 4. Enable at least one decoder. It is suggested to start with a single decoder, and once working, enable additional decoders.
-a. Find the [decoders] section in the file.
-b. To enable a decoder, remove the # character at the beginning of the line. For example, to enable 10m FT8:
+    1. Find the [decoders] section in the file.
+    2. To enable a decoder, remove the # character at the beginning of the line. For example, to enable 10m FT8:
 `
 # 10m
 #decoder=28180000 FT4
@@ -39,21 +38,16 @@ decoder=28074000 FT8
 `
 The bandwidth selected in CW Skimmer Server and the center frequencies for each band may limit which frequencies CWSL_DIGI can access. CWSL_DIGI has access to only the bands and frequencies setup in CW Skimmer Server, which must be kept in mind when enabling decoders.
 5. Enable reporting to spotting networks, if desired.
-a. Find the [reporting] section.
-b. Set *pskreporter*, *rbn* and *wsprnet* to true to enable spotting, as desired. Note that Reverse Beacon Network additionally requires Aggregator - additional steps are detailed below.
+    1. Find the [reporting] section.
+    2. Set *pskreporter*, *rbn* and *wsprnet* to true to enable spotting, as desired. Note that Reverse Beacon Network additionally requires Aggregator - additional steps are detailed below.
 
 ## Running CWSL_DIGI ##
 
 CWSL_DIGI is best run from a Command prompt. While not required, this allows console output, including error messages, to be viewed if the program crashes or terminates unexpectedly.
 
 1. Open a Command prompt.
-a. Start Menu
-b. Run
-c. "cmd"
 2. Change to the directory where CWSL_DIGI was installed (Extracted from zip)
-a. cd C:\CWSL_DIGI
 3. Run CWSL_DIGI.exe
-a. CWSL_DIGI.exe
 
 
 ### Reverse Beacon Network ###
@@ -63,15 +57,15 @@ For spotting to [Reverse Beacon Network (RBN)](https://www.reversebeacon.net/ind
 1. In the CWSL_DIGI config.ini file, set rbn=true
 2. Install [Aggregator](https://www.reversebeacon.net/pages/Aggregator+34).
 3. In Aggregator, select the *FT#* tab.
-a. Put a check next to source number 40
-b. Make sure it is set to port 2215
-4. When running properly, the white box at the upper right will begin to display FT4/8 spots. Only CQ spots are submitted to RBN, and duplicates are culled.
+    1. Put a check next to source number 40
+    2. Make sure it is set to port 2215
+    3. When running properly, the white box at the upper right will begin to display FT4/8 spots. Only CQ spots are submitted to RBN, and duplicates are culled.
 5. Confirm that FT4/FT8 spots are present on the Status page of Aggregator.
 
 
 ### Calibration ###
 
-1. If desired, read the file calibration.txt for instructions on how to account for receiver calibration in CWSL_DIGI.
+1. If desired, read the file [CALIBRATION.txt](./CALIBRATION.txt) for instructions on how to configure receiver calibration in CWSL_DIGI.
 
 
 ## Troubleshooting ##
