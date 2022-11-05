@@ -11,10 +11,11 @@ CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 
 ## Latest ##
 
-The latest version is 0.85. 
-[Download Windows 64-bit zip] (./bin/CWSL_DIGI-0.85-release.zip)
+The latest version is 0.85 - [Download Windows 64-bit zip](./bin/CWSL_DIGI-0.85-release.zip)
 
-Notable enhancements in 0.85 include proper decoding of contest messages, and providing band information to RBN Aggregator such that it is displayed on RBN's website.
+Notable enhancements in 0.85 include 
+1. proper decoding of contest messages
+2. providing band information to RBN Aggregator such that it is displayed on RBN's website
 
 ## Installation ##
 
