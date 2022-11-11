@@ -11,7 +11,7 @@ CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 
 # Latest Release #
 
-The latest version is 0.85 - [Download Windows 64-bit zip](./bin/CWSL_DIGI-0.85-release.zip)
+The latest version is 0.85 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.85-take-2.zip)
 
 Notable enhancements in 0.85 include 
 1. proper decoding of contest messages
@@ -22,7 +22,7 @@ Notable enhancements in 0.85 include
 1. Install and configure [CW Skimmer Server](http://www.dxatlas.com/SkimServer/). The detailed steps can be found on the CW Skimmer Server website.
 2. Install [CWSL](https://github.com/HrochL/CWSL). Configure it with CW Skimmer Server. The detailed steps can be found on the CWSL page.
 3. Install the latest [Microsoft Visual Studio 2022 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe). This may not be required if your computer is up to date.
-4. Download the [latest release of CWSL_DIGI](./bin/CWSL_DIGI-0.85-release.zip). Unzip into a folder/directory of your choice. e.g., C:\CWSL_DIGI
+4. Download the latest release of CWSL_DIGI. See download link above. Unzip into a folder of your choice. e.g., C:\CWSL_DIGI
 5. Configure CWSL_DIGI by editing the config.ini file. This step is required. See the detailed Configuration section below.
 6. Start CWSL_DIGI by running CWSL_DIGI.exe.
 
