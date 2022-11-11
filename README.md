@@ -9,7 +9,7 @@ Problem reports and feature requests can be sent to W2AXR, alexranaldi@gmail.com
 CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 
 
-## Latest ##
+# Latest Release #
 
 The latest version is 0.85 - [Download Windows 64-bit zip](./bin/CWSL_DIGI-0.85-release.zip)
 
