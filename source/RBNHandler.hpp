@@ -32,6 +32,18 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 
 using namespace std::literals; 
 
+struct RBNDecoder {
+    std::string mode;
+    uint64_t freq;
+};
+
+struct RBNStatus
+{
+    uint32_t highestDecodeFreq;
+    uint8_t numActiveDecoders;
+    std::vector<RBNDecoder> decoders;
+};
+
 struct RBNReport
 {
     std::string callsign;
@@ -84,6 +96,10 @@ public:
     void handle(const std::uint32_t freq, const uint32_t baseFreq, const std::int32_t snr, const std::string& message, const std::string& mode) {
         RBNReport rep("", snr, freq, baseFreq, "", 0, message, mode);
         mReports.enqueue(rep);
+    }
+
+    void handleStatus(const RBNStatus& status) {
+        mStatus.enqueue(status);
     }
 
     bool init(const std::string& operatorCallsign, const std::string& operatorLocator, const std::string& programName, const std::string& ipAddr, int port) {
@@ -139,6 +155,20 @@ public:
 
         std::size_t count = 0;
 
+        while (!mStatus.empty()) {
+            auto status = mStatus.dequeue();
+            Packet statusPacket;
+            addStatusHeaderToPacket(statusPacket);
+            addInt32ToPacket(statusPacket, status.highestDecodeFreq);
+            statusPacket.push_back( static_cast<uint8_t>(status.decoders.size()) );
+
+            for (size_t k = 0; k < status.decoders.size(); ++k) {
+                addStringToPacket(statusPacket, status.decoders[k].mode); // Rx Mode
+                addInt64ToPacket(statusPacket, status.decoders[k].freq);
+            }
+            mPackets.push(statusPacket);
+        }
+
         while (!mReports.empty()) {
 
             auto report = mReports.dequeue();
@@ -149,7 +179,7 @@ public:
             {
                 Packet statusPacket;
 
-                addHeaderToPacket(statusPacket);
+                addReportHeaderToPacket(statusPacket);
 
                 std::vector<std::uint8_t> msg1 = { 0x00, 0x00, 0x00, 0x01 };  // Message number for status datagram
                 for (auto b : msg1) {
@@ -192,7 +222,7 @@ public:
             // second, make decode packet
             Packet decodePacket;
 
-            addHeaderToPacket(decodePacket);
+            addReportHeaderToPacket(decodePacket);
             std::vector<std::uint8_t> msg2 = { 0x00, 0x00, 0x00, 0x02 }; // Message number for decode datagram
             for (auto b : msg2) {
                 decodePacket.push_back(b);
@@ -228,12 +258,25 @@ public:
 
     private:
 
-        std::vector<std::uint8_t> getHeader() {
+        std::vector<std::uint8_t> getStatusHeader() {
+            return { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 };
+        }
+
+        std::vector<std::uint8_t> getReportHeader() {
             return { 0xAD, 0xBC, 0xCB, 0xDA, 0x00, 0x00, 0x00, 0x02 };
         }
 
-        void addHeaderToPacket(Packet& packet) {
-            auto hdr = getHeader();
+        void addStatusHeaderToPacket(Packet& packet) {
+            auto hdr = getStatusHeader();
+            //std::cout << "HEADER" << std::endl;
+            for (auto p : hdr) {
+                packet.push_back(p);
+            }
+        }
+
+
+        void addReportHeaderToPacket(Packet& packet) {
+            auto hdr = getReportHeader();
             //std::cout << "HEADER" << std::endl;
             for (auto p : hdr) {
                 packet.push_back(p);
@@ -254,6 +297,18 @@ public:
             packet.push_back(static_cast<std::uint8_t>((num & 0x000000FF) >> 0));
         }
 
+        void addInt64ToPacket(Packet& packet, const uint64_t num) {
+            packet.push_back(static_cast<std::uint8_t>((num & 0xFF00000000000000) >> 56));
+            packet.push_back(static_cast<std::uint8_t>((num & 0x00FF000000000000) >> 48));
+            packet.push_back(static_cast<std::uint8_t>((num & 0x0000FF0000000000) >> 40));
+            packet.push_back(static_cast<std::uint8_t>((num & 0x000000FF00000000) >> 32));
+            packet.push_back(static_cast<std::uint8_t>((num & 0x00000000FF000000) >> 24));
+            packet.push_back(static_cast<std::uint8_t>((num & 0x0000000000FF0000) >> 16));
+            packet.push_back(static_cast<std::uint8_t>((num & 0x000000000000FF00) >> 8));
+            packet.push_back(static_cast<std::uint8_t>((num & 0x00000000000000FF) >> 0));
+        }
+
+
         void addDoubleToPacket(Packet& packet, double d) {
             uint64_t *num = reinterpret_cast<uint64_t*>(&d);
             packet.push_back(static_cast<std::uint8_t>((*num & 0xFF00000000000000) >> 56));
@@ -272,6 +327,8 @@ public:
         SOCKET mSocket;
 
         SafeQueue< RBNReport > mReports;
+
+        SafeQueue< RBNStatus > mStatus;
 
         std::thread mSendThread;
 

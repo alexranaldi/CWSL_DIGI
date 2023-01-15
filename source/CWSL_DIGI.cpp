@@ -111,7 +111,7 @@ static inline bool setupDecoder(Decoder& decoder, size_t instanceId) {
     if (-1 == nMem) {
         printer->debug("Unable to open CWSL shared memory at the specified frequency. Bad frequency or sharedmem specified?");
         printer->debug("Note that frequency calibration may shift the expected frequency outside of what is expected!");
-        return false;
+        return true; // false only returned on catastrophic failure
     }
     else {
         const std::string smname = createSharedMemName(nMem, decoder.getsmNum());
@@ -147,7 +147,8 @@ static inline bool setupDecoder(Decoder& decoder, size_t instanceId) {
                 ftAudioScaleFactor,
                 wsprAudioScaleFactor,
                 printer,
-                decoderPool
+                decoderPool,
+                decoder.getTRPeriod()
                 );
 
             decoder.setInstance(std::move(inst));
@@ -202,7 +203,7 @@ static inline void waitForTimeQ65_30(std::shared_ptr<ScreenPrinter> printer, std
     printer->debug("Q65-30 Synchronization thread exiting");
 }
 
-static inline void waitForTimeJT65(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+static inline void waitForTime60(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
     int goSec = -1;
     bool go = false;
     while (!syncThreadTerminateFlag) {
@@ -215,7 +216,7 @@ static inline void waitForTimeJT65(std::shared_ptr<ScreenPrinter> printer, std::
             }
             go = ts->tm_sec == 0;
             if (go) {
-                printer->print("Signalling beginning of JT65 interval...", LOG_LEVEL::DEBUG);
+                printer->print("Signalling beginning of 60s interval...", LOG_LEVEL::DEBUG);
                 goSec = ts->tm_sec;
                 for (size_t k = 0; k < preds.size(); ++k) {
                     preds[k]->store(true);
@@ -226,10 +227,10 @@ static inline void waitForTimeJT65(std::shared_ptr<ScreenPrinter> printer, std::
             }
         }
         catch (const std::exception& e) {
-            printer->print("waitForTimeJT65", e);
+            printer->print("waitForTime60", e);
         }
     } // while
-    printer->debug("JT65 Synchronization thread exiting");
+    printer->debug("60s Synchronization thread exiting");
 }
 
 static inline void waitForTimeFT8(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
@@ -262,8 +263,110 @@ static inline void waitForTimeFT8(std::shared_ptr<ScreenPrinter> printer, std::v
     printer->debug("FT8 Synchronization thread exiting");
 }
 
+static inline void waitForTime1800(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    SYSTEMTIME time;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            GetSystemTime(&time);
+            const std::uint16_t min = static_cast<std::uint16_t>(time.wMinute);
+            const bool minFlag = min % 30 == 0;
+            const bool secFlag = time.wSecond == 0;
+            if (minFlag && secFlag && go) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = minFlag && secFlag;
+            if (go) {
+                printer->print("Signalling beginning of 1800s interval...", LOG_LEVEL::DEBUG);
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            } //if
+            else if (minFlag || (!minFlag && time.wSecond <= 55)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        } // try
+        catch (const std::exception& e) {
+            printer->print("waitForTime1800", e);
+        } // catch
+    } // while
+    printer->debug("1800s Synchronization thread exiting");
+}
 
-static inline void waitForTimeWSPR(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+static inline void waitForTime900(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    SYSTEMTIME time;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            GetSystemTime(&time);
+            const std::uint16_t min = static_cast<std::uint16_t>(time.wMinute);
+            const bool minFlag = min % 15 == 0;
+            const bool secFlag = time.wSecond == 0;
+            if (minFlag && secFlag && go) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = minFlag && secFlag;
+            if (go) {
+                printer->print("Signalling beginning of 900s interval...", LOG_LEVEL::DEBUG);
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            } //if
+            else if (minFlag || (!minFlag && time.wSecond <= 55)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        } // try
+        catch (const std::exception& e) {
+            printer->print("waitForTime900", e);
+        } // catch
+    } // while
+    printer->debug("900s Synchronization thread exiting");
+}
+
+static inline void waitForTime300(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
+    SYSTEMTIME time;
+    bool go = false;
+    while (!syncThreadTerminateFlag) {
+        try {
+            GetSystemTime(&time);
+            const std::uint16_t min = static_cast<std::uint16_t>(time.wMinute);
+            const bool minFlag = min % 5 == 0;
+            const bool secFlag = time.wSecond == 0;
+            if (minFlag && secFlag && go) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+                continue;
+            }
+            go = minFlag && secFlag;
+            if (go) {
+                printer->print("Signalling beginning of 300s interval...", LOG_LEVEL::DEBUG);
+                for (size_t k = 0; k < preds.size(); ++k) {
+                    preds[k]->store(true);
+                }
+            } //if
+            else if (minFlag || (!minFlag && time.wSecond <= 55)) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MAX_SLEEP_MS));
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(MIN_SLEEP_MS));
+            }
+        } // try
+        catch (const std::exception& e) {
+            printer->print("waitForTime300", e);
+        } // catch
+    } // while
+    printer->debug("300s Synchronization thread exiting");
+}
+
+
+static inline void waitForTime120(std::shared_ptr<ScreenPrinter> printer, std::vector<std::shared_ptr<SyncPredicate>>& preds) {
     SYSTEMTIME time;
     bool go = false;
     while (!syncThreadTerminateFlag) {
@@ -278,7 +381,7 @@ static inline void waitForTimeWSPR(std::shared_ptr<ScreenPrinter> printer, std::
             }
             go = minFlag && secFlag;
             if (go) {
-                printer->print("Signalling beginning of WSPR interval...", LOG_LEVEL::DEBUG);
+                printer->print("Signalling beginning of 120s interval...", LOG_LEVEL::DEBUG);
                 for (size_t k = 0; k < preds.size(); ++k) {
                     preds[k]->store(true);
                 }
@@ -291,10 +394,10 @@ static inline void waitForTimeWSPR(std::shared_ptr<ScreenPrinter> printer, std::
             }
         } // try
         catch (const std::exception& e) {
-            printer->print("waitForTimeWSPR", e);
+            printer->print("waitForTime120", e);
         } // catch
     } // while
-    printer->debug("WSPR Synchronization thread exiting");
+    printer->debug("120s Synchronization thread exiting");
 }
 
 
@@ -382,7 +485,7 @@ void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrin
 
         try {
             std::stringstream hdr;
-            hdr << std::setfill(' ') << std::left << std::setw(10) << "Instance" << std::setw(16) << "Status" << std::setw(12) << "Frequency" << std::setw(8) << "Mode" << std::setw(8) << "24 Hour" << std::setw(8) << "1 Hour" << std::setw(8) << "5 Min" << std::setw(8) << "1 Min";
+            hdr << std::setfill(' ') << std::left << std::setw(10) << "Instance" << std::setw(16) << "Status" << std::setw(12) << "Frequency" << std::setw(12) << "Mode" << std::setw(8) << "24 Hour" << std::setw(8) << "1 Hour" << std::setw(8) << "5 Min" << std::setw(8) << "1 Min";
             printer->print(hdr.str());
             for (std::size_t k = 0; k < instances.size(); ++k) {
                 auto v1Min = statsHandler->getCounts(k, 60);
@@ -405,7 +508,7 @@ void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrin
                     status = "Uninitialized";
                 }
                 std::stringstream s;
-                s << std::setfill(' ') << std::left << std::setw(10) << std::to_string(k) << std::setw(16) << status << std::setw(12) << std::to_string(instances[k].getFreq()) << std::setw(8) << mode << std::setw(8) << std::to_string(v24Hr) << std::setw(8) << std::to_string(v1Hr) << std::setw(8) << std::to_string(v5Min) << std::setw(8) << std::to_string(v1Min);
+                s << std::setfill(' ') << std::left << std::setw(10) << std::to_string(k) << std::setw(16) << status << std::setw(12) << std::to_string(instances[k].getFreq()) << std::setw(12) << mode << std::setw(8) << std::to_string(v24Hr) << std::setw(8) << std::to_string(v1Hr) << std::setw(8) << std::to_string(v5Min) << std::setw(8) << std::to_string(v1Min);
                 printer->print(s.str());
             }
         }
@@ -455,9 +558,9 @@ int main(int argc, char **argv)
         ("wsjtx.decodedepth", po::value<int>(), "decode depth passed to jt9.exe. must be 1, 2 or 3. default 3")
         ("wsjtx.temppath", po::value<std::string>(), "temporary file path for writing wave files")
         ("wsjtx.binpath", po::value<std::string>(), "WSJT-X bin folder path - required")
-        ("wsjtx.ftaudioscalefactor", po::value<float>(), "FT4 and FT8 audio scale factor, default 0.90")
+        ("wsjtx.ftaudioscalefactor", po::value<float>(), "Audio scale factor for all modes but WSPR, default 0.90")
         ("wsjtx.wspraudioscalefactor", po::value<float>(), "WSPR audio scale factor, default 0.20")
-        ("wsjtx.maxdataage", po::value<int>(), "Max data age, factor of mode duration. default 10")
+        ("wsjtx.maxdataage", po::value<int>(), "Max data age to decode, in seconds, default 300")
         ("wsjtx.wsprcycles", po::value<int>(), "WSPR decoder cycles per bit. default 3000")
         ("wsjtx.transfermethod", po::value<std::string>(), "either wavfile or shmem, default shmem")
         ("logging.statsreportinginterval", po::value<int>(), "how often to report decoder statistics in seconds, default 300")
@@ -609,6 +712,16 @@ int main(int argc, char **argv)
     int numQ65_30Decoders = 0;
     int numJT65Decoders = 0;
 
+    int numFST4Decoders = 0;
+    int numFST4WDecoders = 0;
+
+    // period-specific decoders, excluding WSPR
+    int num60sDecoders = 0;
+    int num120sDecoders = 0;
+    int num300sDecoders = 0;
+    int num900sDecoders = 0;
+    int num1800sDecoders = 0;
+
     if (vm.count("decoders.decoder")) {
         std::vector<std::string> decodersRawVec = vm["decoders.decoder"].as<std::vector<std::string>>();
         printer->print("Found " + std::to_string(decodersRawVec.size()) + " decoder entries");
@@ -636,9 +749,46 @@ int main(int argc, char **argv)
             }
             else if (mode == "JT65") {
                 numJT65Decoders++;
+                num60sDecoders++;
+            }
+            else if (mode == "FST4-60") {
+                numFST4Decoders++;
+                num60sDecoders++;
+            }
+            else if (mode == "FST4-120") {
+                numFST4Decoders++;
+                num120sDecoders++;
+            }
+            else if (mode == "FST4-300") {
+                numFST4Decoders++;
+                num300sDecoders++;
+            }
+            else if (mode == "FST4-900") {
+                numFST4Decoders++;
+                num900sDecoders++;
+            }
+            else if (mode == "FST4-1800") {
+                numFST4Decoders++;
+                num1800sDecoders++;
+            }
+            else if (mode == "FST4W-120") {
+                numFST4WDecoders++;
+                num120sDecoders++;
+            }
+            else if (mode == "FST4W-300") {
+                numFST4WDecoders++;
+                num300sDecoders++;
+            }
+            else if (mode == "FST4W-900") {
+                numFST4WDecoders++;
+                num900sDecoders++;
+            }
+            else if (mode == "FST4W-1800") {
+                numFST4WDecoders++;
+                num1800sDecoders++;
             }
             else {
-                printer->err("Error parsing decoder line, unknown mode! Line: " + rawLine);
+                printer->err("Error parsing decoder line, unknown mode: " + mode + "Full Line: " + rawLine);
                 cleanup();
                 return EXIT_FAILURE;
             }
@@ -699,7 +849,9 @@ int main(int argc, char **argv)
         const float nd1 = static_cast<float>(numFT4Decoders + numFT8Decoders + numQ65_30Decoders) * (1.0f/5.0f); // 1 per 5 ft4/ft8/Q65
         const float nd2 = static_cast<float>(numWSPRDecoders) * (1.0f/3.0f); // 1 per 3 wspr
         const float nd3 = static_cast<float>(numJT65Decoders) * (1.0f / 3.0f); // 1 per 3 JT-65
-        const float nInstf = (nd1 + nd2 + nd3) * decoderburden;
+        const float nd4 = static_cast<float>(numFST4WDecoders) * (1.0f / 3.0f); // 1 per 3 FST4W
+        const float nd5 = static_cast<float>(numFST4Decoders) * (1.0f / 3.0f); // 1 per 3 FST4
+        const float nInstf = (nd1 + nd2 + nd3 + nd4 + nd5) * decoderburden;
         numJT9Instances = static_cast<int>(std::round(nInstf + 0.55f));
     }
     printer->print("Maximum number of simultaneous jt9.exe and wsprd.exe instances: " + std::to_string(numJT9Instances));
@@ -729,7 +881,7 @@ int main(int argc, char **argv)
     if (highestDecodeFreq > SSB_BW) {
         highestDecodeFreq = SSB_BW;
     }
-    printer->print("Decoding up to " + std::to_string(highestDecodeFreq) + " Hz");
+    printer->print("Maximum SSB audio frequency for decode: " + std::to_string(highestDecodeFreq) + " Hz");
 
     std::string wavPath = "";
     if (vm.count("wsjtx.temppath")) {
@@ -799,16 +951,16 @@ int main(int argc, char **argv)
         }
     }
 
-    int maxDataAge = 10;
+    int maxDataAge = 300;
     if (vm.count("wsjtx.maxdataage")) {
         maxDataAge = vm["wsjtx.maxdataage"].as<int>();
-        if (maxDataAge > 100) {
-            printer->err("wsjtx.maxdataage must be <= 100");
+        if (maxDataAge > 600) {
+            printer->err("wsjtx.maxdataage must be <= 600");
             cleanup();
             return EXIT_FAILURE;
         }
-        else if (maxDataAge < 2) {
-            printer->err("wsjtx.maxdataage must be >= 2");
+        else if (maxDataAge < 30) {
+            printer->err("wsjtx.maxdataage must be >= 30");
             cleanup();
             return EXIT_FAILURE;
         }
@@ -966,20 +1118,35 @@ int main(int argc, char **argv)
         ft4SignalThread.detach();
     }
 
-    std::thread wsprSignalThread;
-    if (numWSPRDecoders) {
-        wsprSignalThread = std::thread(&waitForTimeWSPR, printer, std::ref(preds.wsprPreds));
-        wsprSignalThread.detach();
+    std::thread signal60sThread;
+    if (num60sDecoders) {
+        signal60sThread = std::thread(&waitForTime60, printer, std::ref(preds.s60sPreds));
+        signal60sThread.detach();
+    }
+    std::thread signal120sThread;
+    if (numWSPRDecoders || num120sDecoders) {
+        signal120sThread = std::thread(&waitForTime120, printer, std::ref(preds.s120sPreds));
+        signal120sThread.detach();
+    }
+    std::thread signal300sThread;
+    if (num300sDecoders) {
+        signal300sThread = std::thread(&waitForTime300, printer, std::ref(preds.s300sPreds));
+        signal300sThread.detach();
+    }
+    std::thread signal900sThread;
+    if (num900sDecoders) {
+        signal900sThread = std::thread(&waitForTime900, printer, std::ref(preds.s900sPreds));
+        signal900sThread.detach();
+    }
+    std::thread signal1800sThread;
+    if (num1800sDecoders) {
+        signal1800sThread = std::thread(&waitForTime1800, printer, std::ref(preds.s1800sPreds));
+        signal1800sThread.detach();
     }
     std::thread q65_30SignalThread;
     if (numQ65_30Decoders) {
         q65_30SignalThread = std::thread(&waitForTimeQ65_30, printer, std::ref(preds.q65_30Preds));
         q65_30SignalThread.detach();
-    }
-    std::thread JT65SignalThread;
-    if (numJT65Decoders) {
-        JT65SignalThread = std::thread(&waitForTimeJT65, printer, std::ref(preds.jt65Preds));
-        JT65SignalThread.detach();
     }
 
 
@@ -988,7 +1155,11 @@ int main(int argc, char **argv)
 
     for (size_t k = 0; k < decoders.size(); ++k) {
         auto& decoder = decoders[k];
-        setupDecoder(decoder, k);
+        const bool s = setupDecoder(decoder, k);
+        if (!s) {
+            printer->err("Decoder failed to setup!");
+            return EXIT_FAILURE;
+        }
     }
 
     std::thread statsThread = std::thread(&reportStats, std::ref(statsHandler), printer, std::ref(decoders), statsReportingInterval);
@@ -1002,6 +1173,8 @@ int main(int argc, char **argv)
     printer->print("Main loop starting");
 
     int counter = 0;
+
+    std::chrono::time_point<std::chrono::steady_clock> lastRBNStatusMessageTime = std::chrono::steady_clock::now() - 1h;
 
     while (1) {
         std::this_thread::sleep_for(std::chrono::milliseconds(MAIN_LOOP_SLEEP_MS));
@@ -1028,6 +1201,29 @@ int main(int argc, char **argv)
         }
         else {
             counter++;
+        }
+        if (useRBN) {
+            if (std::chrono::steady_clock::now() - lastRBNStatusMessageTime > 60s) {
+
+                RBNStatus status;
+                status.highestDecodeFreq = highestDecodeFreq;
+
+                for (size_t k = 0; k < decoders.size(); ++k) {
+                    auto& d = decoders[k];
+                    auto s = d.getStatus();
+                    if (s == InstanceStatus::RUNNING) {
+                        RBNDecoder rbnDecoder;
+                        rbnDecoder.mode = d.getMode();
+                        rbnDecoder.freq = d.getFreq();
+                        status.decoders.push_back(rbnDecoder);
+                    }
+                }
+
+                rbn->handleStatus(status);
+
+                lastRBNStatusMessageTime = std::chrono::steady_clock::now();
+
+            }
         }
     }
 

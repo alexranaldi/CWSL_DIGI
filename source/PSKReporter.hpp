@@ -28,6 +28,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <thread>
 #include <iostream>
 
+#include "CWSL_DIGI.hpp"
 #include "SafeQueue.h"
 #include "TimeUtils.hpp"
 #include "ScreenPrinter.hpp"
@@ -87,6 +88,17 @@ public:
 
     void handle(std::string callsign, int32_t snr, FrequencyHz freq, uint64_t epochTime, std::string mode) {
         Report rep(callsign, snr, freq, "", epochTime, mode);
+
+        // fix modes. wsjt-x does not report the tx/rx periods for FST4 and FST4W, so we won't either. 
+        //  FST4W-XXX -> FST4W
+        //  FST4-XXX -> FST4
+        if (isModeFST4W(rep.mode)) {
+            rep.mode = "FST4W";
+        }
+        else if (isModeFST4(rep.mode)) {
+            rep.mode = "FST4";
+        }
+
         mReports.enqueue(rep);
     }
 
@@ -289,6 +301,8 @@ public:
         // snr
         payload.push_back(report.snr & 0xFF);
      
+        //std::cout << report.mode << std::endl;
+
         payload.push_back(static_cast<Byte>(report.mode.size()));
         for (char c : report.mode) {
             payload.push_back(c);
@@ -355,7 +369,7 @@ public:
 
             bool skip = false;
             for (auto it = mSentReports.begin(); it != mSentReports.end(); ++it) {
-                if (it->callsign == report.callsign) {
+                if (it->callsign == report.callsign && isSameBand(it->freq, report.freq) && it->mode == report.mode) {
                     const std::int64_t agoSec = report.epochTime - it->epochTime;
                     if (agoSec <= MIN_SECONDS_BETWEEN_SAME_CALLSIGN_REPORTS) {
                         skip = true;
@@ -401,6 +415,16 @@ public:
 
 
     private:
+
+        bool isSameBand(const FrequencyHz f1, const FrequencyHz f2) {
+            int divisor = 1000000; // 1e6
+            if (f1 <= 1000000 || f2 <= 1000000) {
+                divisor = 100000; // 1e5
+            }
+            const int c1 = f1 / divisor;
+            const int c2 = f2 / divisor;
+            return c1 == c2;
+        }
 
         void addHeaderToPacket(Packet& packet) {
             auto hdr = getHeader();
@@ -483,7 +507,7 @@ public:
         std::thread mSendThread;
 
         const std::size_t MAX_REPORTS_PER_PACKET = 64;
-        const std::int64_t MIN_SECONDS_BETWEEN_SAME_CALLSIGN_REPORTS = 136;
+        const std::int64_t MIN_SECONDS_BETWEEN_SAME_CALLSIGN_REPORTS = 121;
 
         std::chrono::time_point<std::chrono::steady_clock> mTimeDescriptorsSent;
 

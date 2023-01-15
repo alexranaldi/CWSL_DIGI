@@ -23,6 +23,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 
 #include "Decoder.hpp"
 #include "Instance.hpp"
+#include "CWSL_DIGI.hpp"
 
     Decoder::Decoder(
         FrequencyHz freq_In,
@@ -42,6 +43,10 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 
     void Decoder::setInstance(std::unique_ptr<Instance> inst) {
         instance = std::move(inst);
+    }
+
+    float Decoder::getTRPeriod() {
+        return getRXPeriod(mode);
     }
 
     InstanceStatus Decoder::getStatus() {

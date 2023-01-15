@@ -100,6 +100,22 @@ OutputHandler::OutputHandler(
                     screenPrinter->print("parseOutputWSPR call", e);
                 }
             }
+            else if (isModeFST4(item.mode)) {
+                try {
+                    parseOutputFST4(item.output, item.epochTime, item.baseFreq, item.instanceId);
+                }
+                catch (const std::exception& e) {
+                    screenPrinter->print("parseOutputFST4 call", e);
+                }
+            }
+            else if (isModeFST4W(item.mode)) {
+                try {
+                    parseOutputFST4W(item.output, item.epochTime, item.baseFreq, item.instanceId);
+                }
+                catch (const std::exception& e) {
+                    screenPrinter->print("parseOutputFST4W call", e);
+                }
+            }
             else if (item.mode == "Q65-30") {
                 try {
                     parseOutputQ65(item);
@@ -113,7 +129,7 @@ OutputHandler::OutputHandler(
                     parseOutputJT65(item);
                 }
                 catch (const std::exception& e) {
-                    screenPrinter->print("parseOutputQ65 call", e);
+                    screenPrinter->print("parseOutputJT65 call", e);
                 }
             }
             else {
@@ -125,6 +141,140 @@ OutputHandler::OutputHandler(
     // TODO: make this a separate thread some day?
     void OutputHandler::handle(const JT9Output& output) {
         items.enqueue(output);
+    }
+
+    void OutputHandler::parseOutputFST4W(const std::string& out, const uint64_t epochTime, const FrequencyHz baseFreq, const std::size_t instanceId) {
+
+        screenPrinter->print("Handling FST4W output", LOG_LEVEL::DEBUG);
+
+        std::istringstream ss(out);
+        std::string line;
+
+        while (std::getline(ss, line)) {
+            trim(line);
+            std::vector<std::string> lineVec = splitStringByDelim(line, ' ', true);
+
+            // snr is 5-7
+            std::string snr = lineVec[1];
+            screenPrinter->print("FST4W  snr: " + snr, LOG_LEVEL::TRACE);
+            trim(snr);
+
+            // dt is 9-12
+            std::string dt = lineVec[2];
+            trim(dt);
+            screenPrinter->print("FST4W  dt: " + dt, LOG_LEVEL::TRACE);
+
+            // freq
+            std::string freq = lineVec[3];
+            trim(freq);
+            screenPrinter->print("FST4W  freq: " + freq, LOG_LEVEL::TRACE);
+
+            // 18 always space
+            if (line.at(18) != ' ') {
+                screenPrinter->debug("Skipping line because character 18 is not a space: " + line);
+                continue;
+            }
+
+            // 19 always `
+            if (line.at(19) != '`') {
+                screenPrinter->debug("Skipping line because character 19 is not a `: " + line);
+                continue;
+            }
+
+            // 20 always space
+            if (line.at(20) != ' ') {
+                screenPrinter->debug("Skipping line because character 20 is not a space: " + line);
+                continue;
+            }
+
+            // 21 always space
+            if (line.at(21) != ' ') {
+                screenPrinter->debug("Skipping line because character 21 is not a space: " + line);
+                continue;
+            }
+
+            // msg is 22-end
+            std::string msg = line.substr(22, line.size() - 22);
+            trim(msg);
+
+            const double actualFreq = std::stod(freq) + static_cast<double>(baseFreq);
+            const auto success = handleMessageUniversal(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, epochTime, "FST4W", baseFreq, std::stof(dt));
+            if (success) {
+                statsHandler->handleReport(instanceId, epochTime * 1000);
+            }
+            else {
+                screenPrinter->debug("Failed to handle FST4W message: " + msg);
+            }
+        }
+    }
+
+
+    void OutputHandler::parseOutputFST4(const std::string& out, const uint64_t epochTime, const FrequencyHz baseFreq, const std::size_t instanceId) {
+        screenPrinter->print("Handling FST4 output", LOG_LEVEL::DEBUG);
+
+        // 0         1         2         3         4
+        // 012345678901234567890123456789012345678901234567890
+        // 0000 -13  0.4 1080 `  CQ W3TS FN10
+
+        std::istringstream ss(out);
+        std::string line;
+
+        while (std::getline(ss, line)) {
+            trim(line);
+            std::vector<std::string> lineVec = splitStringByDelim(line, ' ', true);
+
+            // snr is 5-7
+            std::string snr = lineVec[1];
+                  screenPrinter->print("FST4  snr: " + snr, LOG_LEVEL::TRACE);
+            trim(snr);
+
+            // dt is 9-12
+            std::string dt = lineVec[2];
+            trim(dt);
+                 screenPrinter->print("FST4  dt: " + dt, LOG_LEVEL::TRACE);
+
+            // freq
+            std::string freq = lineVec[3];
+            trim(freq);
+                  screenPrinter->print("FST4  freq: " + freq, LOG_LEVEL::TRACE);
+
+            // 18 always space
+            if (line.at(18) != ' ') {
+                screenPrinter->debug("Skipping line because character 18 is not a space: " + line);
+                continue;
+            }
+
+            // 19 always `
+            if (line.at(19) != '`') {
+                screenPrinter->debug("Skipping line because character 19 is not a `: " + line);
+                continue;
+            }
+
+            // 20 always space
+            if (line.at(20) != ' ') {
+                screenPrinter->debug("Skipping line because character 20 is not a space: " + line);
+                continue;
+            }
+
+            // 21 always space
+            if (line.at(21) != ' ') {
+                screenPrinter->debug("Skipping line because character 21 is not a space: " + line);
+                continue;
+            }
+
+            // msg is 22-end
+            std::string msg = line.substr(22, line.size() - 22);
+            trim(msg);
+
+            const double actualFreq = std::stod(freq) + static_cast<double>(baseFreq);
+            const auto success = handleMessageUniversal(std::stoi(snr), static_cast<uint32_t>(actualFreq), msg, epochTime, "FST4", baseFreq, std::stof(dt));
+            if (success) {
+                statsHandler->handleReport(instanceId, epochTime * 1000);
+            }
+            else {
+                screenPrinter->debug("Failed to handle FST4 message: " + msg);
+            }
+        }
     }
 
     void OutputHandler::parseOutputWSPR(const std::string& out, const uint64_t epochTime, const FrequencyHz baseFreq, const std::size_t instanceId) {
@@ -592,10 +742,17 @@ OutputHandler::OutputHandler(
                     }
                 }
                 else {
-                    // CQ SOMETHING CALL
+                    // CQ CALL SOMETHING - not sure what SOMETHING is here?
                     if (reporter) {
                         reporter->handle(first, snr, freq, epochTime, mode);
                     }
+                }
+                return true;
+            }
+            else if (checkCall(second)) {
+                // CQ SOMETHING CALL
+                if (reporter) {
+                    reporter->handle(second, snr, freq, epochTime, mode);
                 }
                 return true;
             }
@@ -633,6 +790,30 @@ OutputHandler::OutputHandler(
                     screenPrinter->debug("Callsign failed validation or was ignored: " + tx_call);
                 }
             }
+            else if (numSpaces == 3) {
+                std::string tx_call = msg.substr(spaces[0] + 1, spaces[1] - spaces[0] - 1);
+                if (spaces[2] - spaces[1] == 2 && msg.at(spaces[2]-1) == 'R') {
+                    // CALL CALL R GRID
+                    std::string loc = msg.substr(spaces[2] + 1, msg.length() - spaces[2] + 1);
+                    if (checkCall(tx_call) && isValidLocator(loc)) {
+                        if (reporter) {
+                            reporter->handle(tx_call, snr, freq, loc, epochTime, mode);
+                        }
+                        return true;
+                    }
+                }
+                else if (spaces[2] - spaces[1] == 4) {
+                    // CALL CALL RST STATE - N4ZR W2AXR 599 NY
+                    // CALL CALL RST SERIAL - N4ZR W2AXR 599 0244
+                    if (checkCall(tx_call)) {
+                        if (reporter) {
+                            reporter->handle(tx_call, snr, freq, epochTime, mode);
+                        }
+                        return true;
+                    }
+                }
+            }
+
         }
         logBadMessage("Message not handled: " + msg);
         return false;

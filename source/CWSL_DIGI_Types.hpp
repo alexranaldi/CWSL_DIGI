@@ -21,6 +21,7 @@ You should have received a copy of the GNU General Public License
 along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 */
 
+#include <stdexcept>
 #include <cstdint>
 #include <string>
 #include <memory>
@@ -88,21 +89,54 @@ public:
             ft4Preds.push_back(pred);
         }
         else if (mode == "JT65") {
-            jt65Preds.push_back(pred);
+            s60sPreds.push_back(pred);
         }
         else if (mode == "Q65-30") {
             q65_30Preds.push_back(pred);
         }
+        else if (mode == "FST4-60") {
+            s60sPreds.push_back(pred);
+        }
         else if (mode == "WSPR") {
-            wsprPreds.push_back(pred);
+            s120sPreds.push_back(pred);
+        }
+        else if (mode == "FST4-120") {
+            s120sPreds.push_back(pred);
+        }
+        else if (mode == "FST4-300") {
+            s300sPreds.push_back(pred);
+        }
+        else if (mode == "FST4-900") {
+            s900sPreds.push_back(pred);
+        }
+        else if (mode == "FST4-1800") {
+            s1800sPreds.push_back(pred);
+        }
+        else if (mode == "FST4W-120") {
+            s120sPreds.push_back(pred);
+        }
+        else if (mode == "FST4W-300") {
+            s300sPreds.push_back(pred);
+        }
+        else if (mode == "FST4W-900") {
+            s900sPreds.push_back(pred);
+        }
+        else if (mode == "FST4W-1800") {
+            s1800sPreds.push_back(pred);
+        }
+        else {
+            throw std::runtime_error("Unhandled mode: " + mode);
         }
         return pred;
     }
 
     std::vector<std::shared_ptr<SyncPredicate>> ft8Preds;
     std::vector<std::shared_ptr<SyncPredicate>> ft4Preds;
-    std::vector<std::shared_ptr<SyncPredicate>> jt65Preds;
     std::vector<std::shared_ptr<SyncPredicate>> q65_30Preds;
-    std::vector<std::shared_ptr<SyncPredicate>> wsprPreds;
+    std::vector<std::shared_ptr<SyncPredicate>> s60sPreds;
+    std::vector<std::shared_ptr<SyncPredicate>> s120sPreds;
+    std::vector<std::shared_ptr<SyncPredicate>> s300sPreds;
+    std::vector<std::shared_ptr<SyncPredicate>> s900sPreds;
+    std::vector<std::shared_ptr<SyncPredicate>> s1800sPreds;
 
 };

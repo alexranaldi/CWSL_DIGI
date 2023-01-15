@@ -70,6 +70,10 @@ public:
 
     void parseOutputWSPR(const std::string& out, const uint64_t epochTime, const FrequencyHz baseFreq, const std::size_t instanceId);
 
+    void parseOutputFST4(const std::string& out, const uint64_t epochTime, const FrequencyHz baseFreq, const std::size_t instanceId);
+
+    void parseOutputFST4W(const std::string& out, const uint64_t epochTime, const FrequencyHz baseFreq, const std::size_t instanceId);
+
     void parseOutputFT4FT8(const std::string out, const uint64_t epochTime, const std::string mode, const FrequencyHz baseFreq, const std::size_t instanceId);
 
     void parseOutputJT65(const JT9Output& output);
