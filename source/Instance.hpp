@@ -60,7 +60,8 @@ public:
         const float audioScaleFactor_ftIn,
         const float audioScaleFactor_wsprIn,
         std::shared_ptr<ScreenPrinter> sp,
-        std::shared_ptr<DecoderPool> dp
+        std::shared_ptr<DecoderPool> dp,
+        const float trperiodIn
         );
 
     virtual ~Instance();
@@ -129,6 +130,8 @@ private:
     std::string callsign;
 
     std::atomic<InstanceStatus> status;
+
+    float trperiod;
 
 }; 
 

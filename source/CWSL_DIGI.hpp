@@ -34,7 +34,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include "ScreenPrinter.hpp"
 
 static const std::string PROGRAM_NAME = "CWSL_DIGI";
-static const std::string PROGRAM_VERSION = "0.84";
+static const std::string PROGRAM_VERSION = "0.86";
 
 constexpr float Q65_30_PERIOD = 30.0f;
 constexpr float FT8_PERIOD = 15.0f;
@@ -71,10 +71,38 @@ static inline float getRXPeriod(const std::string& mode) {
     else if (mode == "JT65") {
         return JT65_PERIOD;
     }
+    else if (mode == "FST4-60") {
+        return 60.0;
+    }
+    else if (mode == "FST4-120") {
+        return 120.0;
+    }
+    else if (mode == "FST4-300") {
+        return 300.0;
+    }
+    else if (mode == "FST4-900") {
+        return 900.0;
+    }
+    else if (mode == "FST4-1800") {
+        return 1800.0;
+    }
+    else if (mode == "FST4W-120") {
+        return 120.0;
+    }
+    else if (mode == "FST4W-300") {
+        return 300.0;
+    }
+    else if (mode == "FST4W-900") {
+        return 900.0;
+    }
+    else if (mode == "FST4W-1800") {
+        return 1800.0;
+    }
     else {
         throw std::runtime_error("Unhandled mode: " + mode);
     }
 }
+
 
 #include <boost/lexical_cast.hpp>
 using boost::lexical_cast;
@@ -109,4 +137,12 @@ static inline std::string createTemporaryDirectory()
     std::string fullPath = pathBuf + std::string("\\") + make_uuid();
     CreateDirectoryA((LPCSTR)fullPath.c_str(),NULL);
     return fullPath;
+}
+
+static inline bool isModeFST4(const std::string& in) {
+    return in.compare(0, 5, "FST4-") == 0;
+}
+
+static inline bool isModeFST4W(const std::string& in) {
+    return in.compare(0, 6, "FST4W-") == 0;
 }

@@ -40,7 +40,8 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
         const float audioScaleFactor_ftIn,
         const float audioScaleFactor_wsprIn,
         std::shared_ptr<ScreenPrinter> sp,
-        std::shared_ptr<DecoderPool> dp
+        std::shared_ptr<DecoderPool> dp,
+        const float trperiodIn
         ) : 
         audioScaleFactor_ft(audioScaleFactor_ftIn),
         audioScaleFactor_wspr(audioScaleFactor_wsprIn),
@@ -60,9 +61,10 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
         decoderPool(dp),
         smname(""),
         terminateFlag(false),
-        status(InstanceStatus::NOT_INITIALIZED)
+        status(InstanceStatus::NOT_INITIALIZED),
+        trperiod(trperiodIn)
         {
-        receiver->addInstance(this);
+            receiver->addInstance(this);
         }
 
     Instance::~Instance(){
@@ -145,7 +147,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
                     return false;
                 }
 
-                const size_t afBufNumSa = static_cast<size_t>( static_cast<double>(SSB_SR) * static_cast<double>(getRXPeriod(digitalMode)+2) );
+                const size_t afBufNumSa = static_cast<size_t>( static_cast<double>(SSB_SR) * static_cast<double>(getRXPeriod(digitalMode)+5) );
                 screenPrinter->debug(instanceLog() + "Initializing af ring buffer, length = " + std::to_string(afBufNumSa) + " samples");
 
                 for (size_t k = 0; k < af_buffer.size; ++k) {
@@ -240,7 +242,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
                     }
                     //screenPrinter->debug(instanceLog() + "Audio converted from float to i16");
                     
-                    ItemToDecode toDecode(audioBuf_i16, digitalMode, startTime, ssbFreq, static_cast<int>(id), cwd);
+                    ItemToDecode toDecode(audioBuf_i16, digitalMode, startTime, ssbFreq, static_cast<int>(id), cwd, trperiod);
                     decoderPool->push(toDecode);
 
                     screenPrinter->debug(instanceLog() + "Item pushed to decode queue");

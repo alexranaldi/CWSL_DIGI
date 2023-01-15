@@ -116,6 +116,7 @@ struct ItemToDecode
     std::vector<std::int16_t> audio;
     int instanceId;
     std::string cwd;
+    float trperiod;
 
     ItemToDecode() : 
         mode(""),
@@ -123,7 +124,8 @@ struct ItemToDecode
         baseFreq(0),
         audio(0),
         instanceId(0),
-        cwd("")
+        cwd(""),
+        trperiod(0)
     {}
 
     ItemToDecode(
@@ -132,13 +134,15 @@ struct ItemToDecode
         const std::uint64_t epochTimeIn,
         const FrequencyHz baseFreqIn,
         const int instanceIdIn,
-        const std::string& cwdIn) :
+        const std::string& cwdIn,
+        const float trperiodIn) :
         audio(audioIn),
         mode(modeIn),
         epochTime(epochTimeIn),
         baseFreq(baseFreqIn),
         instanceId(instanceIdIn),
-        cwd(cwdIn)
+        cwd(cwdIn),
+        trperiod(trperiodIn)
         {}
 };
 
@@ -165,7 +169,7 @@ public:
     wsprCycles(wc),
     highestDecodeFreq(h),
     keepWavFiles(keepWavFilesIn),
-    maxDataAge(maxDataAgeIn),
+    maxDataAgeSec(maxDataAgeIn),
     maxWSPRDInstances(maxWSPRDInstancesIn),
     numjt9threads(nJT9Threads),
     numWorkers(nWork),
@@ -176,6 +180,9 @@ public:
     transferMethod(transferMethodIn),
     terminateFlag(false) {
 
+        if (maxDataAgeSec > MAX_AGE) {
+            maxDataAgeSec = MAX_AGE;
+        }
     }
 
     virtual ~DecoderPool(){}
@@ -247,7 +254,6 @@ public:
         std::uint64_t iterationStartTime = getEpochTimeMs();
         std::uint64_t iterationStartDecodeTime = getEpochTimeMs();
 
-        constexpr int MAX_AGE = 260; // sec
         while (!terminateFlag) {
 
             const std::uint64_t iterationEndTime = getEpochTimeMs();
@@ -293,20 +299,13 @@ public:
             }
             double agoSec = static_cast<double>(et) - static_cast<double>(item.epochTime);
             const double rxPeriod = getRXPeriod(item.mode);
-            if (item.mode == "WSPR" || item.mode == "JT65") {
-                agoSec -= rxPeriod;
-            }
-            double maxAgeSec = static_cast<double>(maxDataAge) * rxPeriod;
-            if (maxAgeSec > MAX_AGE) {
-                maxAgeSec = MAX_AGE;
-            }
 
-            if (agoSec > maxAgeSec) {
+            agoSec -= rxPeriod;
+
+            if (agoSec > maxDataAgeSec) {
                 screenPrinter->print(decoderLog(workerIndex) + "data is " + std::to_string(agoSec) + " seconds old! Too old to decode - skipping!", LOG_LEVEL::ERR);
+                screenPrinter->print(decoderLog(workerIndex) + "Skipped Item Instance=" + std::to_string(item.instanceId), LOG_LEVEL::ERR);
                 continue;
-            }
-            else if (agoSec > maxAgeSec * 0.647217275152409) { // pi divided by three times the golden ratio
-                screenPrinter->print(decoderLog(workerIndex) + "data Age close to limit: " + std::to_string(agoSec) + " sec", LOG_LEVEL::WARN);
             }
             else {
                 screenPrinter->print(decoderLog(workerIndex) + "data Age: " + std::to_string(agoSec) + " sec", LOG_LEVEL::DEBUG);
@@ -315,7 +314,7 @@ public:
             if (item.mode == "WSPR" && !allowLong) {
                 toDecodeLong.enqueue(item);
             }
-           else  if (("shmem" == transferMethod) && (item.mode != "WSPR")) {
+            else  if (("shmem" == transferMethod) && (item.mode != "WSPR")) {
                 screenPrinter->debug(decoderLog(workerIndex) + "item will be decoded with shmem");
                 try {
                     decodeUsingShMem(item, workerIndex);
@@ -363,7 +362,6 @@ public:
 
         screenPrinter->debug(decoderLog(workerIndex) + "Created shared memory segment. Key=" + skey + " size=" + std::to_string(mem_jt9.size()) + " bytes");
 
-        screenPrinter->debug(decoderLog(workerIndex) + "Copying data to shmem");
 
         if (!mem_jt9.lock())
         {
@@ -373,6 +371,21 @@ public:
 
         dec_data_t* dec_data = reinterpret_cast<dec_data_t*>(mem_jt9.data());
         memset(dec_data, 0, sizeof(dec_data_t));
+
+        dec_data->params.nfa = 0;
+        dec_data->params.nfb = highestDecodeFreq;
+
+        dec_data->params.ndepth = decodedepth;
+        dec_data->params.nutc = 0;
+        dec_data->params.newdat = 1;
+        dec_data->params.nagain = 0;
+        dec_data->params.emedelay = 0;
+        dec_data->params.nrobust = 0;
+        dec_data->params.ndiskdat = 0;
+        dec_data->params.minw = 0;
+        dec_data->params.minSync = 0;
+        dec_data->params.dttol = 4;
+
 
         if (item.mode == "FT8") {
             dec_data->params.lft8apon = true;
@@ -389,9 +402,10 @@ public:
             dec_data->params.nzhsym = 0;
         }
         else if (item.mode == "Q65-30") {
-            dec_data->params.nmode = 65;
+            dec_data->params.nmode = 66; // mainwindow.cpp 3144
+            dec_data->params.ntxmode = 66; // mainwindow.cpp 3144
             dec_data->params.ntrperiod = 30.0; // s
-            dec_data->params.nzhsym = 0;
+            dec_data->params.nzhsym = 196; // mainwindow.cpp 1404
         }
         else if (item.mode == "JT65") {
             dec_data->params.nzhsym = 174;
@@ -399,27 +413,97 @@ public:
             dec_data->params.nmode = 65;
             dec_data->params.ntrperiod = 60; // s
         }
-
-        dec_data->params.ndepth = decodedepth;
-        dec_data->params.nutc = 0;
-        dec_data->params.newdat = 1;
-        dec_data->params.nagain = 0;
-        dec_data->params.nfa = 0;
-        dec_data->params.nfb = highestDecodeFreq;
-        dec_data->params.emedelay = 0;
-        dec_data->params.nrobust = 0;
-        dec_data->params.ndiskdat = 0;
-        dec_data->params.minw = 0;
-        dec_data->params.minSync = 0;
-        dec_data->params.dttol = 4;
+        else if (item.mode == "FST4-60") {
+            dec_data->params.nfa = 900;
+            dec_data->params.nfb = 1100;
+            dec_data->params.nzhsym = 187; //mainwindow.cpp 1414
+            dec_data->params.nmode = 240;
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 60; // s
+        }
+        else if (item.mode == "FST4-120") {
+            dec_data->params.nfa = 900;
+            dec_data->params.nfb = 1100;
+            dec_data->params.nzhsym = 387;
+            dec_data->params.nmode = 240; 
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 120; // s
+        }
+        else if (item.mode == "FST4-300") {
+            dec_data->params.nfa = 700;
+            dec_data->params.nfb = 1100;
+            dec_data->params.nzhsym = 1003;
+            dec_data->params.nmode = 240;
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 300; // s
+        }
+        else if (item.mode == "FST4-900") {
+            dec_data->params.nfa = 900;
+            dec_data->params.nfb = 1100;
+            dec_data->params.nzhsym = 3107;
+            dec_data->params.nmode = 240;
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 900; // s
+        }
+        else if (item.mode == "FST4-1800") {
+            dec_data->params.nfa = 900;
+            dec_data->params.nfb = 1100;
+            dec_data->params.nzhsym = 6232;
+            dec_data->params.nmode = 240;
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 1800; // s
+        }
+        else if (item.mode == "FST4W-120") {
+            dec_data->params.nzhsym = 387; // mainwindow.cpp 1414
+            dec_data->params.nmode = 241 ; // mainwindow.cpp 3159
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 120; // s
+        }
+        else if (item.mode == "FST4W-300") {
+            dec_data->params.nzhsym = 1003; // mainwindow.cpp 1414
+            dec_data->params.nmode = 241; // mainwindow.cpp 3159
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 300; // s
+        }
+        else if (item.mode == "FST4W-900") {
+            dec_data->params.nzhsym = 3107; // mainwindow.cpp 1414
+            dec_data->params.nmode = 241; // mainwindow.cpp 3159
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 900; // s
+        }
+        else if (item.mode == "FST4W-1800") {
+            dec_data->params.nzhsym = 6232; // mainwindow.cpp 1414
+            dec_data->params.nmode = 241; // mainwindow.cpp 3159
+            dec_data->params.ntol = 100;
+            dec_data->params.ntrperiod = 1800; // s
+        }
+        else {
+            screenPrinter->err(decoderLog(workerIndex) + "Unknown mode : " + item.mode);
+            mem_jt9.unlock();
+            return;
+        }
 
         dec_data->ipc[0] = dec_data->params.nzhsym;
         dec_data->ipc[1] = 1;// istart
         dec_data->ipc[2] = -1;// idone
 
-        memcpy(&(dec_data->d2[0]), item.audio.data(), item.audio.size() * sizeof(std::int16_t));
+        size_t nel = item.audio.size();
+        if (nel > NTMAX * RX_SAMPLE_RATE) {
+            nel = NTMAX * RX_SAMPLE_RATE;
+        }
+
+        size_t dsz = nel * sizeof(std::int16_t);
+
+        screenPrinter->debug(decoderLog(workerIndex) + "Copying data to shmem, data size=" + std::to_string(dsz) + " bytes");
+
+        memcpy(&(dec_data->d2[0]), item.audio.data(), dsz);
+
+        screenPrinter->debug(decoderLog(workerIndex) + "copy to shmem complete");
+
 
         mem_jt9.unlock();
+
+        screenPrinter->trace(decoderLog(workerIndex) + "shmem unlocked");
 
 
         PROCESS_INFORMATION pi;
@@ -458,23 +542,30 @@ public:
         si.dwFlags |= STARTF_USESTDHANDLES;
 
         std::string appName = "";
-        std::string modeOp = "";
+        std::string modeOp = " ";
 
         appName = "jt9.exe";
         if ("FT8" == item.mode) {
-            modeOp += " -8 -m " + std::to_string(numjt9threads) + " ";
+            modeOp += "-8 -m " + std::to_string(numjt9threads) + " ";
         }
         else if ("FT4" == item.mode) {
-            modeOp += " -5 -m " + std::to_string(numjt9threads) + " ";
+            modeOp += "-5 -m " + std::to_string(numjt9threads) + " ";
         }
         else if ("Q65-30" == item.mode) {
-
+            modeOp += "-3 -m " + std::to_string(numjt9threads) + " -p 30 -H " + std::to_string(highestDecodeFreq) + " ";
         }
         else if ("JT65" == item.mode) {
             modeOp += "-6 -m " + std::to_string(numjt9threads) + " ";
         }
+        else if ("FST4W-120" == item.mode || "FST4W-300" == item.mode || "FST4W-900" == item.mode || "FST4W-1800" == item.mode) {
+            modeOp += "-W -m " + std::to_string(numjt9threads) + " "; // -W is FST4W
+        }
+        else if ("FST4-60" == item.mode || "FST4-120" == item.mode || "FST4-300" == item.mode || "FST4-900" == item.mode || "FST4-1800" == item.mode) {
+            modeOp += "-7 -m " + std::to_string(numjt9threads) + " "; // -7 is FST4
+        }
         else {
             screenPrinter->err(decoderLog(workerIndex) + "Mode " + item.mode + " not handled");
+            return;
         }
 
         const std::string opts = modeOp + " -s " + skey;
@@ -656,14 +747,14 @@ public:
         si.dwFlags |= STARTF_USESTDHANDLES;
 
         std::string appName = "";
-        std::string modeOp = "";
+        std::string modeOp = " ";
         if (("FT8" == item.mode) || ("FT4" == item.mode)) {
             appName = "jt9.exe";
             if ("FT8" == item.mode) {
-                modeOp += " -8 -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " -w 1 -H " + std::to_string(highestDecodeFreq) + " ";
+                modeOp += "-8 -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " -w 1 -H " + std::to_string(highestDecodeFreq) + " ";
             }
             else if ("FT4" == item.mode) {
-                modeOp += " -5 -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " -w 1 -H " + std::to_string(highestDecodeFreq) + " ";
+                modeOp += "-5 -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " -w 1 -H " + std::to_string(highestDecodeFreq) + " ";
             }
             else {
                 modeOp += "";
@@ -671,15 +762,27 @@ public:
         }
         else if ("Q65-30" == item.mode) {
             appName = "jt9.exe";
-            modeOp += " -3 -p 30 -H " + std::to_string(highestDecodeFreq) + " ";
+            modeOp += "-3 -p 30 -H " + std::to_string(highestDecodeFreq) + " ";
         }
         else if ("WSPR" == item.mode) {
             appName = "wsprd.exe";
-            modeOp = " -C " + std::to_string(wsprCycles) + " -o 5 -d ";
+            modeOp += "-C " + std::to_string(wsprCycles) + " -o 5 -d ";
         }
         else if ("JT65" == item.mode) {
             appName = "jt9.exe";
-            modeOp = " -6 -d " + std::to_string(decodedepth) + " ";
+            modeOp += "-6 -d " + std::to_string(decodedepth) + " ";
+        }
+        else if ("FST4W-120" == item.mode || "FST4W-300" == item.mode || "FST4W-900" == item.mode || "FST4W-1800" == item.mode) {
+            appName = "jt9.exe";
+            modeOp += "-W -p " + std::to_string((int)item.trperiod) + " -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " "; // -W is FST4W
+        }
+        else if ("FST4-60" == item.mode || "FST4-120" == item.mode || "FST4-300" == item.mode || "FST4-900" == item.mode || "FST4-1800" == item.mode) {
+            appName = "jt9.exe";
+            modeOp += "-7 -p " + std::to_string((int)item.trperiod) + " -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " "; // -7 is FST4
+        }
+        else {
+            screenPrinter->err(decoderLog(workerIndex) + "Mode " + item.mode + " not handled");
+            return;
         }
 
         const std::string opts = modeOp + wavFileName;
@@ -818,7 +921,7 @@ private:
 
     bool keepWavFiles;
 
-    int maxDataAge;
+    int maxDataAgeSec;
 
     int wsprCycles;
 
@@ -831,6 +934,8 @@ private:
     std::thread statsThread;
 
     std::vector<std::tuple< std::uint64_t, std::uint64_t,std::uint64_t>> iterationTimes;
+
+    const int MAX_AGE = 600; // sec
 
 };
 

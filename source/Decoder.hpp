@@ -46,6 +46,8 @@ public:
         double freqCalFactor_In,
         std::string reporterCallsign_In);
 
+    float getTRPeriod();
+
     void setInstance(std::unique_ptr<Instance> inst);
 
     InstanceStatus getStatus();

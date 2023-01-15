@@ -1,6 +1,6 @@
 # Overview #
 
-CWSL_DIGI uses the [CWSL](https://github.com/HrochL/CWSL) utility to decode WSJT-X digital modes including FT8, FT4, JT65, WSPR, and others, and sends spots to [PSK Reporter](https://www.pskreporter.info/pskmap.html), [Reverse Beacon Network](https://www.reversebeacon.net/), and [WSPRNet](https://www.wsprnet.org/drupal/wsprnet/map). CWSL_DIGI was developed by W2AXR, with testing and feedback from WZ7I, W3OA, 9V1RM and N4ZR.
+CWSL_DIGI uses the [CWSL](https://github.com/HrochL/CWSL) utility to decode WSJT-X digital modes including FT8, FT4, JT65, WSPR, and others, and sends spots to [PSK Reporter](https://www.pskreporter.info/pskmap.html), [Reverse Beacon Network](https://www.reversebeacon.net/), and [WSPRNet](https://www.wsprnet.org/drupal/wsprnet/map). CWSL_DIGI was developed by W2AXR, with testing and feedback from WZ7I, W3OA, 9V1RM, N4ZR and K9IMM.
 
 With CWSL_DIGI, [CW Skimmer Server](http://www.dxatlas.com/SkimServer/), and an appropriate SDR (such as a [Red Pitaya](https://redpitaya.com/red-pitaya-for-radio-amateurs-sdr/) or [QS1R](https://www.ab9il.net/software-defined-radio/sdr2.html)), is possible to decode CW and multiple digital modes across multiple bands, all simultaneously.
 
@@ -11,11 +11,11 @@ CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 
 # Latest Release #
 
-The latest version is 0.85 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.85-take-2.zip)
+The latest version is 0.86 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.86.zip)
 
-Notable enhancements in 0.85 include 
-1. proper decoding of contest messages
-2. providing band information to RBN Aggregator such that it is displayed on RBN's website
+Notable enhancements in 0.86 include 
+1. Support for FST4 and FST4W modes
+2. Change PSK Reporter handling, re-spotting within 120s with band changes
 
 ## Installation ##
 
