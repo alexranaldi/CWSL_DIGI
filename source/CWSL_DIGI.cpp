@@ -21,7 +21,6 @@ along with CWSL_DIGI.If not, see < https://www.gnu.org/licenses/>.
 
 // This work is based on: https://github.com/HrochL/CWSL
 
-#include <windows.h>
 
 // stdio and conio used for _kbhit() and _getch()
 #include <stdio.h>
@@ -41,20 +40,17 @@ along with CWSL_DIGI.If not, see < https://www.gnu.org/licenses/>.
 #include <limits>
 #include <memory>
 
-#include "mmreg.h"
 
 #include <algorithm> 
 #include <cctype>
 #include <locale>
 #include <unordered_map>
 
-#  pragma comment(lib, "Ws2_32.lib")
-
-#include "SharedMemory.h"
 
 std::atomic_bool syncThreadTerminateFlag = false;
 
 #include "CWSL_DIGI.hpp"
+#include "mmreg.h"
 
 #include "OutputHandler.hpp"
 #include "Instance.hpp"
@@ -70,6 +66,8 @@ std::atomic_bool syncThreadTerminateFlag = false;
 
 #include "ScreenPrinter.hpp"
 #include "Decoder.hpp"
+
+#include "SharedMemory.h"
 
 std::string badMessageLogFile = "";
 
@@ -524,7 +522,9 @@ void reportStats(std::shared_ptr<Stats> statsHandler, std::shared_ptr<ScreenPrin
 // Main function
 int main(int argc, char **argv)
 {
-    std::cout << PROGRAM_NAME + " " + PROGRAM_VERSION << " by W2AXR" << std::endl;
+    std::string compilationDate = __DATE__;
+    std::string compilationTime = __TIME__;
+    std::cout << PROGRAM_NAME + " " + PROGRAM_VERSION << " by W2AXR, compiled " << compilationDate << " " << compilationTime << std::endl;
     std::cout << "License:  GNU GENERAL PUBLIC LICENSE, Version 3" << std::endl;
     std::cout << "Please run " + PROGRAM_NAME + " --help for syntax" << std::endl;
     std::cout << "Press CONTROL + C to terminate" << std::endl;
@@ -563,6 +563,7 @@ int main(int argc, char **argv)
         ("wsjtx.maxdataage", po::value<int>(), "Max data age to decode, in seconds, default 300")
         ("wsjtx.wsprcycles", po::value<int>(), "WSPR decoder cycles per bit. default 3000")
         ("wsjtx.transfermethod", po::value<std::string>(), "either wavfile or shmem, default shmem")
+        ("js8call.binpath", po::value<std::string>(), "JS8Call bin folder path - required for JS8 Mode")
         ("logging.statsreportinginterval", po::value<int>(), "how often to report decoder statistics in seconds, default 300")
         ("logging.decodesfile", po::value<std::string>(), "file name for decode text log")
         ("logging.logreports", po::value<bool>(), "log each handled report, default true")
@@ -666,12 +667,16 @@ int main(int argc, char **argv)
 
     // Parse radio settings
     bool bUseExtioDLL = false;
+
+    // Future functionality...?
+    /*
     std::string extioPath;
     if (vm.count("radio.extiodll")) {
         extioPath = vm["radio.extiodll"].as<std::string>();
         printer->print("ExtIO DLL path: " + extioPath);
         bUseExtioDLL = true;
     }
+    */
 
     int SMNumber = -1;
     if (vm.count("radio.sharedmem")) {
@@ -708,6 +713,7 @@ int main(int argc, char **argv)
 
     int numFT4Decoders = 0;
     int numFT8Decoders = 0;
+    int numJS8Decoders = 0;
     int numWSPRDecoders = 0;
     int numQ65_30Decoders = 0;
     int numJT65Decoders = 0;
@@ -740,6 +746,9 @@ int main(int argc, char **argv)
             }
             else if (mode == "FT8") {
                 numFT8Decoders++;
+            }
+            else if (mode == "JS8") {
+                numJS8Decoders++;
             }
             else if (mode == "WSPR") {
                 numWSPRDecoders++;
@@ -794,6 +803,8 @@ int main(int argc, char **argv)
             }
             int smnum = SMNumber;
             if (bUseExtioDLL) {
+            // Future functionality...?
+            /*
                 printer->info("Loading Extio DLL library: " + extioPath);
                 HMODULE extioModH = LoadLibraryA(extioPath.c_str());
                 if (!extioModH) {
@@ -801,6 +812,7 @@ int main(int argc, char **argv)
                     return EXIT_FAILURE;
                 }
                 printer->info("Loaded Extio DLL library");
+            */
             }
             else {
                 if (decoderVecLine.size() >= 3) {
@@ -846,7 +858,7 @@ int main(int argc, char **argv)
             decoderburden = vm["wsjtx.decoderburden"].as<float>();
             printer->print("Decoder Burden specified as: " + std::to_string(decoderburden));
         }
-        const float nd1 = static_cast<float>(numFT4Decoders + numFT8Decoders + numQ65_30Decoders) * (1.0f/5.0f); // 1 per 5 ft4/ft8/Q65
+        const float nd1 = static_cast<float>(numFT4Decoders + numFT8Decoders + numQ65_30Decoders + numJS8Decoders) * (1.0f/5.0f); // 1 per 5 ft4/ft8/Q65/JS8
         const float nd2 = static_cast<float>(numWSPRDecoders) * (1.0f/3.0f); // 1 per 3 wspr
         const float nd3 = static_cast<float>(numJT65Decoders) * (1.0f / 3.0f); // 1 per 3 JT-65
         const float nd4 = static_cast<float>(numFST4WDecoders) * (1.0f / 3.0f); // 1 per 3 FST4W
@@ -895,15 +907,29 @@ int main(int argc, char **argv)
     }
     printer->print("Using path for wav files: " + wavPath);
 
-    std::string binPath = "";
+    std::string binPathX = "";
     if (vm.count("wsjtx.binpath")) {
-        binPath = vm["wsjtx.binpath"].as<std::string>();
+        binPathX = vm["wsjtx.binpath"].as<std::string>();
     }
     else {
         printer->err("Missing wsjtx.binpath input argument!");
         cleanup();
         return EXIT_FAILURE;
     }
+
+    std::string binPathJS = "";
+    if (vm.count("js8call.binpath")) {
+        binPathJS = vm["js8call.binpath"].as<std::string>();
+    }
+    else {
+        printer->debug("js8call.binpath input argument not specified");
+        if (numJS8Decoders) {
+            printer->err("Missing js8call.binpath input argument!");
+            cleanup();
+            return EXIT_FAILURE;
+        }
+    }
+
 
     bool keepWavFiles = false;
     if (vm.count("wsjtx.keepwav")) {
@@ -1008,7 +1034,6 @@ int main(int argc, char **argv)
 
     // Parse reporting options
 
-
     reporter = nullptr;
     if (vm.count("reporting.pskreporter")) {
         usePSKReporter = vm["reporting.pskreporter"].as<bool>();
@@ -1053,7 +1078,7 @@ int main(int argc, char **argv)
         }
     }
 
-    decoderPool = std::make_shared<DecoderPool>(transferMethod, keepWavFiles, printJT9Output, numJT9Instances, maxWSPRDInstances, numjt9threads, decodedepth, wsprCycles, highestDecodeFreq, binPath, maxDataAge, wavPath, printer, outputHandler);
+    decoderPool = std::make_shared<DecoderPool>(transferMethod, keepWavFiles, printJT9Output, numJT9Instances, maxWSPRDInstances, numjt9threads, decodedepth, wsprCycles, highestDecodeFreq, binPathX, binPathJS, maxDataAge, wavPath, printer, outputHandler);
     const bool decStat = decoderPool->init();
     if (!decStat) {
         cleanup();
@@ -1107,7 +1132,7 @@ int main(int argc, char **argv)
     // create time signalling threads
 
     std::thread ft8SignalThread;
-    if (numFT8Decoders) {
+    if (numFT8Decoders || numJS8Decoders) {
         ft8SignalThread = std::thread(&waitForTimeFT8, printer, std::ref(preds.ft8Preds));
         ft8SignalThread.detach();
     }

@@ -1,6 +1,6 @@
 # Overview #
 
-CWSL_DIGI uses the [CWSL](https://github.com/HrochL/CWSL) utility to decode WSJT-X digital modes including FT8, FT4, JT65, WSPR, and others, and sends spots to [PSK Reporter](https://www.pskreporter.info/pskmap.html), [Reverse Beacon Network](https://www.reversebeacon.net/), and [WSPRNet](https://www.wsprnet.org/drupal/wsprnet/map). CWSL_DIGI was developed by W2AXR, with testing and feedback from WZ7I, W3OA, 9V1RM, N4ZR and K9IMM.
+CWSL_DIGI uses the [CWSL](https://github.com/HrochL/CWSL) utility to decode WSJT-X digital modes including FT8, FT4, JT65, WSPR, FST4, FST4W, and JS8 and sends spots to [PSK Reporter](https://www.pskreporter.info/pskmap.html), [Reverse Beacon Network](https://www.reversebeacon.net/), and [WSPRNet](https://www.wsprnet.org/drupal/wsprnet/map). CWSL_DIGI was developed by W2AXR, with testing and feedback from WZ7I, W3OA, 9V1RM, N4ZR, K9IMM and MM3NDH.
 
 With CWSL_DIGI, [CW Skimmer Server](http://www.dxatlas.com/SkimServer/), and an appropriate SDR (such as a [Red Pitaya](https://redpitaya.com/red-pitaya-for-radio-amateurs-sdr/) or [QS1R](https://www.ab9il.net/software-defined-radio/sdr2.html)), is possible to decode CW and multiple digital modes across multiple bands, all simultaneously.
 
@@ -11,20 +11,25 @@ CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 
 # Latest Release #
 
-The latest version is 0.86 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.86.zip)
+The latest version is 0.88 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.88.zip)
 
-Notable enhancements in 0.86 include 
-1. Support for FST4 and FST4W modes
-2. Change PSK Reporter handling, re-spotting within 120s with band changes
-
+Notable changes in 0.88 include:
+Enhancement: FT8 - support Fox/Hound messages. This will increase the number of FT8 spots significantly if you skim the DX frequencies when an expedition is going on!
+Enhancement: JS8 - support for some JS8 message formats. Requires JS8Call to be installed.
+Enhancement: Supports SOTAmat FT8 messages (Resolves https://github.com/alexranaldi/CWSL_DIGI/issues/6)
+Fix: use hostname instead of IP Address when connecting to WSPRNet and PSK Reporter. This resolves the ongoing issue with 0.86 and earlier being unable to contact WSPRNet.
+Fix: FST4 and FST4W decoding bugs that prevented successful decoding in many cases.
+Fix: several bugs in callsign handling and bad callsign detection.
+Fix: Improve PSK Reporter connection reliability.
 ## Installation ##
 
 1. Install and configure [CW Skimmer Server](http://www.dxatlas.com/SkimServer/). The detailed steps can be found on the CW Skimmer Server website.
 2. Install [CWSL](https://github.com/HrochL/CWSL). Configure it with CW Skimmer Server. The detailed steps can be found on the CWSL page.
 3. Install the latest [Microsoft Visual Studio 2022 redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe). This may not be required if your computer is up to date.
-4. Download the latest release of CWSL_DIGI. See download link above. Unzip into a folder of your choice. e.g., C:\CWSL_DIGI
-5. Configure CWSL_DIGI by editing the config.ini file. This step is required. See the detailed Configuration section below.
-6. Start CWSL_DIGI by running CWSL_DIGI.exe.
+4. Install the [Intel Fortran redistributable](https://drive.google.com/drive/folders/1pk99ruANXTd_87oLce2L32H2V-P6dAFn?usp=drive_link). This may not be required if your computer is up to date.
+5. Download the latest release of CWSL_DIGI. See download link above. Unzip into a folder of your choice. e.g., C:\CWSL_DIGI
+6. Configure CWSL_DIGI by editing the config.ini file. This step is required. See the detailed Configuration section below.
+7. Start CWSL_DIGI by running CWSL_DIGI.exe.
 
 ## Configuration ##
 

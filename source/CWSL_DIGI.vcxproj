@@ -19,13 +19,21 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\js8call_source\decodedtext.cpp" />
+    <ClCompile Include="..\..\js8call_source\jsc.cpp" />
+    <ClCompile Include="..\..\js8call_source\varicode.cpp" />
     <ClCompile Include="CWSL_DIGI.cpp" />
     <ClCompile Include="Decoder.cpp" />
     <ClCompile Include="Instance.cpp" />
     <ClCompile Include="OutputHandler.cpp" />
+    <ClCompile Include="PSKReporter.cpp" />
     <ClCompile Include="SharedMemory.cpp" />
+    <ClCompile Include="WSPRNet.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\js8call_source\decodedtext.h" />
+    <ClInclude Include="..\..\js8call_source\jsc.h" />
+    <ClInclude Include="..\..\js8call_source\varicode.h" />
     <ClInclude Include="CWSL_DIGI.hpp" />
     <ClInclude Include="CWSL_DIGI_Types.hpp" />
     <ClInclude Include="CWSL_Utils.hpp" />
@@ -111,15 +119,22 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>C:\Qt\5.14.2\msvc2017_64\include;C:\boost_1_70_0;C:\CWSL\CWSL_FT8;C:\ft8_lib\common;C:\ft8_lib\fft;C:\ft8_lib\ft8;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\Qt\5.14.2\msvc2017_64\include;C:\js8call_source;C:\boost_1_70_0;C:\CWSL\CWSL_FT8;C:\ft8_lib\common;C:\ft8_lib\fft;C:\ft8_lib\ft8;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <OmitFramePointers>true</OmitFramePointers>
+      <EnableFiberSafeOptimizations>true</EnableFiberSafeOptimizations>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>C:\boost_1_70_0\stage\lib;C:\Qt\5.14.2\msvc2017_64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>Qt5Core.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Program Files (x86)\Intel\oneAPI\compiler\latest\windows\compiler\lib\intel64_win;C:\wsjt_fort\wsjtx\Release;C:\boost_1_70_0\stage\lib;C:\Qt\5.14.2\msvc2017_64\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>Qt5Core.lib;wsjt_fort.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -139,8 +154,8 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\CWSL\CWSL_FT8;C:\ft8_lib\utils;C:\ft8_lib\ft8;C:\ft8_lib\fft;C:\ft8_lib\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>C:\js8call_source;C:\CWSL\CWSL_FT8;C:\ft8_lib\utils;C:\ft8_lib\ft8;C:\ft8_lib\fft;C:\ft8_lib\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;QT_NO_DEPRECATED;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>

@@ -29,18 +29,24 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <condition_variable>
 #include <atomic>
 #include <memory>
+#include <fstream>
 
 #include "CWSL_DIGI_Types.hpp"
-#include "ScreenPrinter.hpp"
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include "windows.h"
+# pragma comment(lib, "ws2_32")
 
 static const std::string PROGRAM_NAME = "CWSL_DIGI";
-static const std::string PROGRAM_VERSION = "0.86";
+static const std::string PROGRAM_VERSION = "0.88";
 
 constexpr float Q65_30_PERIOD = 30.0f;
 constexpr float FT8_PERIOD = 15.0f;
 constexpr float FT4_PERIOD = 7.5f;
 constexpr float WSPR_PERIOD = 120.0f;
 constexpr float JT65_PERIOD = 60.0f;
+constexpr float JS8_PERIOD = 15.0f;
 
 constexpr size_t Wave_SR = 12000;
 constexpr size_t SSB_BW = 6000;
@@ -58,6 +64,9 @@ constexpr int MAIN_LOOP_SLEEP_MS = 1000;
 static inline float getRXPeriod(const std::string& mode) {
     if (mode == "FT8") {
         return FT8_PERIOD;
+    }
+    else if (mode == "JS8") {
+        return JS8_PERIOD;
     }
     else if (mode == "FT4") {
         return FT4_PERIOD;
@@ -145,4 +154,28 @@ static inline bool isModeFST4(const std::string& in) {
 
 static inline bool isModeFST4W(const std::string& in) {
     return in.compare(0, 6, "FST4W-") == 0;
+}
+
+// chatgpt generated code, for the win
+static inline std::string GetSocketError() {
+    int error = WSAGetLastError();
+    if (error == 0) {
+        return "No error";
+    }
+
+    LPVOID errorMsg = NULL;
+    FormatMessage(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+        NULL,
+        error,
+        0,
+        (LPSTR)&errorMsg,
+        0,
+        NULL
+    );
+
+    std::string ret(static_cast<char*>(errorMsg));
+    LocalFree(errorMsg);
+
+    return ret;
 }

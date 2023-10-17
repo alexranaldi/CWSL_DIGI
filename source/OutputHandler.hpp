@@ -41,7 +41,7 @@ namespace pskreporter {
 }
 
 #include "SafeQueue.h"
-#include "CWSL_DIGI_Types.hpp"
+#include "CWSL_DIGI.hpp"
 
 class OutputHandler {
 
@@ -76,6 +76,8 @@ public:
 
     void parseOutputFT4FT8(const std::string out, const uint64_t epochTime, const std::string mode, const FrequencyHz baseFreq, const std::size_t instanceId);
 
+    void parseOutputJS8(const std::string out, const uint64_t epochTime, const std::string mode, const FrequencyHz baseFreq, const std::size_t instanceId);
+
     void parseOutputJT65(const JT9Output& output);
 
     void parseOutputQ65(const JT9Output& output);
@@ -84,11 +86,19 @@ public:
 
     bool checkCall(const std::string& call);
 
+    void parseCall(std::string& call);
+
+    bool isCallPacked(const std::string& call);
+
     void ignoreCallsign(const std::string& call);
 
     bool isCallsignIgnored(const std::string& test);
 
+    bool isSOTAMATMessage(const std::string& s1, const std::string& s2);
+
     bool handleMessageUniversal(
+        std::string& o_call,
+        std::string& o_loc,
         const int32_t snr, 
         const uint32_t freq, 
         std::string msg, 
@@ -96,6 +106,7 @@ public:
         const std::string& mode, 
         const FrequencyHz baseFreq, 
         const float dt);
+
 
 private:
     int rbnPort;

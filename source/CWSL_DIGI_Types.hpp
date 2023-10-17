@@ -85,6 +85,9 @@ public:
         if (mode == "FT8") {
             ft8Preds.push_back(pred);
         }
+        else if (mode == "JS8") {
+            ft8Preds.push_back(pred);
+        }
         else if (mode == "FT4") {
             ft4Preds.push_back(pred);
         }
