@@ -14,13 +14,13 @@ CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 The latest version is 0.88 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.88-Release.zip)
 
 Notable changes in 0.88 include:
-Enhancement: FT8 - support Fox/Hound messages. This will increase the number of FT8 spots significantly if you skim the DX frequencies when an expedition is going on!
-Enhancement: JS8 - support for some JS8 message formats. Requires JS8Call to be installed.
-Enhancement: Supports SOTAmat FT8 messages (Resolves https://github.com/alexranaldi/CWSL_DIGI/issues/6)
-Fix: use hostname instead of IP Address when connecting to WSPRNet and PSK Reporter. This resolves the ongoing issue with 0.86 and earlier being unable to contact WSPRNet.
-Fix: FST4 and FST4W decoding bugs that prevented successful decoding in many cases.
-Fix: several bugs in callsign handling and bad callsign detection.
-Fix: Improve PSK Reporter connection reliability.
+1. Enhancement: FT8 - support Fox/Hound messages. This will increase the number of FT8 spots significantly if you skim the DX frequencies when an expedition is going on!
+2. Enhancement: JS8 - support for some JS8 message formats. Requires JS8Call to be installed.
+3. Enhancement: Supports SOTAmat FT8 messages (Resolves https://github.com/alexranaldi/CWSL_DIGI/issues/6)
+4. Fix: use hostname instead of IP Address when connecting to WSPRNet and PSK Reporter. This resolves the ongoing issue with 0.86 and earlier being unable to contact WSPRNet.
+5. Fix: FST4 and FST4W decoding bugs that prevented successful decoding in many cases.
+6. Fix: several bugs in callsign handling and bad callsign detection.
+7. Fix: Improve PSK Reporter connection reliability.
 ## Installation ##
 
 1. Install and configure [CW Skimmer Server](http://www.dxatlas.com/SkimServer/). The detailed steps can be found on the CW Skimmer Server website.
