@@ -20,13 +20,12 @@ You should have received a copy of the GNU General Public License
 along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 */
 
-
 #include "Instance.hpp"
 #include "Receiver.hpp"
 
 #include "DecoderPool.hpp"
 #include "ScreenPrinter.hpp"
-#include "WaveFile.hpp"
+//#include "WaveFile.hpp"
 
     Instance::Instance(
         std::shared_ptr<Receiver> receiverIn,

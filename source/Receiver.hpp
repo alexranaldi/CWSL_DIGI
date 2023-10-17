@@ -29,18 +29,18 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <fstream>
 #include <memory>
-#include <windows.h>
 
 #include "ring_buffer_spmc.h"
+
 #include "CWSL_DIGI.hpp"
 #include "CWSL_DIGI_Types.hpp"
-#include "CWSL_Utils.hpp"
 #include "ring_buffer.h"
 #include "decode_audio_buffer.h"
 #include "StringUtils.hpp"
 #include "HamUtils.hpp"
 #include "ScreenPrinter.hpp"
 #include "Instance.hpp"
+#include "CWSL_Utils.hpp" // shared memory utils
 
 enum class ReceiverStatus : int {
     NOT_INITIALIZED,

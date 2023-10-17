@@ -31,7 +31,6 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <tuple>
 
 #include "CWSL_DIGI.hpp"
-#include "windows.h"
 #include "ScreenPrinter.hpp"
 #include "TimeUtils.hpp"
 #include "CWSL_DIGI_Types.hpp"
@@ -40,6 +39,7 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 
 #include "QtCore\qsharedmemory.h"
 
+#include "decodedtext.h"
 
 #define NSMAX 6827
 #define NTMAX 30*60
@@ -108,6 +108,69 @@ typedef struct dec_data {
 } dec_data_t;
 
 
+typedef struct dec_data_js8 {
+    float ss[184 * NSMAX]; // symbol spectra
+    float savg[NSMAX];
+    float sred[5760];
+    short int d2[NTMAX * RX_SAMPLE_RATE]; // sample frame buffer for sample collection
+    struct
+    {
+        int nutc;                   // UTC as integer, HHMM
+        bool ndiskdat;              // true ==> data read from *.wav file
+        int ntrperiod;              // TR period (seconds)
+        int nQSOProgress;           // QSO state machine state
+        int nfqso;                  // User-selected QSO freq (kHz)
+        int nftx;                   // Transmit audio offset where replies might be expected
+        bool newdat;                // true ==> new data, must do long FFT
+        int npts8;                  // npts for c0() array
+        int nfa;                    // Low decode limit (Hz) (filter min)
+        int nfb;                    // High decode limit (Hz) (filter max)
+        int ntol;                   // +/- decoding range around fQSO (Hz)
+        bool syncStats;              // only compute sync candidates
+        int kin;                    // number of frames written to d2
+        int kposA;                  // starting position of decode for submode A
+        int kposB;                  // starting position of decode for submode B
+        int kposC;                  // starting position of decode for submode C
+        int kposE;                  // starting position of decode for submode E
+        int kposI;                  // starting position of decode for submode I
+        int kszA;                   // number of frames for decode for submode A
+        int kszB;                   // number of frames for decode for submode B
+        int kszC;                   // number of frames for decode for submode C
+        int kszE;                   // number of frames for decode for submode E
+        int kszI;                   // number of frames for decode for submode I
+        int nzhsym;                 // half symbol stop index
+        int nsubmode;               // which submode to decode (-1 if using nsubmodes)
+        int nsubmodes;              // which submodes to decode
+        bool nagain;
+        int ndepth;
+        bool lft8apon;
+        bool lapcqonly;
+        bool ljt65apon;
+        int napwid;
+        int ntxmode;
+        int nmode;
+        int minw;
+        bool nclearave;
+        int minSync;
+        float emedelay;
+        float dttol;
+        int nlist;
+        int listutc[10];
+        int n2pass;
+        int nranera;
+        int naggressive;
+        bool nrobust;
+        int nexp_decode;
+        char datetime[20];
+        char mycall[12];
+        char mygrid[6];
+        char hiscall[12];
+        char hisgrid[6];
+        int  ndebug;
+    } params;
+} dec_data_js8_t;
+
+
 struct ItemToDecode
 {
     std::string mode = "";
@@ -158,12 +221,14 @@ public:
         const int d,
         const int wc,
         const uint32_t h,
-        const std::string& binPathIn,
+        const std::string& binPathXIn,
+        const std::string& binPathJSIn,
         const int maxDataAgeIn,
         const std::string& wavPathIn,
         std::shared_ptr<ScreenPrinter> sp,
         std::shared_ptr<OutputHandler> oh) : 
-    binPath(binPathIn),
+    binPathX(binPathXIn),
+    binPathJS(binPathJSIn),
     wavPath(wavPathIn),
     decodedepth(d),
     wsprCycles(wc),
@@ -317,14 +382,24 @@ public:
             else  if (("shmem" == transferMethod) && (item.mode != "WSPR")) {
                 screenPrinter->debug(decoderLog(workerIndex) + "item will be decoded with shmem");
                 try {
-                    decodeUsingShMem(item, workerIndex);
+                    if (item.mode == "JS8") {
+                        // js8 only works via wave files, for now
+                        decodeUsingFile(item, workerIndex);
+                    }
+                    else if (isModeFST4(item.mode) || isModeFST4W(item.mode)) {
+                        // FST4 and FST4-W only work via wave files, for now
+                        decodeUsingFile(item, workerIndex);
+                    }
+                    else {
+                        decodeUsingShMem(item, workerIndex);
+                    }
                 }
                 catch (const std::exception& e) {
                     screenPrinter->print(decoderLog(workerIndex) + "decodeUsingShMem call", e);
                 }
             }
             else {
-                screenPrinter->debug(decoderLog(workerIndex) + "Item will be decoded with wavefile");
+                screenPrinter->debug(decoderLog(workerIndex) + "Item will be decoded with wavefile, instanceid="+std::to_string(item.instanceId));
                 try {
                     decodeUsingFile(item, workerIndex);
                 }
@@ -369,6 +444,7 @@ public:
             return;
         }
 
+
         dec_data_t* dec_data = reinterpret_cast<dec_data_t*>(mem_jt9.data());
         memset(dec_data, 0, sizeof(dec_data_t));
 
@@ -386,11 +462,9 @@ public:
         dec_data->params.minSync = 0;
         dec_data->params.dttol = 4;
 
-
         if (item.mode == "FT8") {
             dec_data->params.lft8apon = true;
             dec_data->params.nzhsym = 0;
-            //dec_data->params.npts8 = (50 * 6912) / 16;
             dec_data->params.nmode = 8;
             dec_data->params.napwid = 50;
             dec_data->params.ntrperiod = 15; // s
@@ -414,6 +488,7 @@ public:
             dec_data->params.ntrperiod = 60; // s
         }
         else if (item.mode == "FST4-60") {
+            dec_data->params.ndepth = 1;
             dec_data->params.nfa = 900;
             dec_data->params.nfb = 1100;
             dec_data->params.nzhsym = 187; //mainwindow.cpp 1414
@@ -422,6 +497,7 @@ public:
             dec_data->params.ntrperiod = 60; // s
         }
         else if (item.mode == "FST4-120") {
+            dec_data->params.ndepth = 1;
             dec_data->params.nfa = 900;
             dec_data->params.nfb = 1100;
             dec_data->params.nzhsym = 387;
@@ -430,6 +506,7 @@ public:
             dec_data->params.ntrperiod = 120; // s
         }
         else if (item.mode == "FST4-300") {
+            dec_data->params.ndepth = 1;
             dec_data->params.nfa = 700;
             dec_data->params.nfb = 1100;
             dec_data->params.nzhsym = 1003;
@@ -438,6 +515,7 @@ public:
             dec_data->params.ntrperiod = 300; // s
         }
         else if (item.mode == "FST4-900") {
+            dec_data->params.ndepth = 1;
             dec_data->params.nfa = 900;
             dec_data->params.nfb = 1100;
             dec_data->params.nzhsym = 3107;
@@ -446,6 +524,7 @@ public:
             dec_data->params.ntrperiod = 900; // s
         }
         else if (item.mode == "FST4-1800") {
+            dec_data->params.ndepth = 1;
             dec_data->params.nfa = 900;
             dec_data->params.nfb = 1100;
             dec_data->params.nzhsym = 6232;
@@ -458,24 +537,34 @@ public:
             dec_data->params.nmode = 241 ; // mainwindow.cpp 3159
             dec_data->params.ntol = 100;
             dec_data->params.ntrperiod = 120; // s
+            dec_data->params.nfqso = 1500; // mainwindow.cpp 3100
+            dec_data->params.nexp_decode = 256 * 3; // mainwindow.cpp 3175
         }
         else if (item.mode == "FST4W-300") {
             dec_data->params.nzhsym = 1003; // mainwindow.cpp 1414
             dec_data->params.nmode = 241; // mainwindow.cpp 3159
             dec_data->params.ntol = 100;
             dec_data->params.ntrperiod = 300; // s
+            dec_data->params.nfqso = 1500; // mainwindow.cpp 3100
+            dec_data->params.nexp_decode = 256 * 3; // mainwindow.cpp 3175
+
         }
         else if (item.mode == "FST4W-900") {
             dec_data->params.nzhsym = 3107; // mainwindow.cpp 1414
             dec_data->params.nmode = 241; // mainwindow.cpp 3159
             dec_data->params.ntol = 100;
             dec_data->params.ntrperiod = 900; // s
+            dec_data->params.nfqso = 1500; // mainwindow.cpp 3100
+            dec_data->params.nexp_decode = 256 * 3; // mainwindow.cpp 3175
+
         }
         else if (item.mode == "FST4W-1800") {
             dec_data->params.nzhsym = 6232; // mainwindow.cpp 1414
             dec_data->params.nmode = 241; // mainwindow.cpp 3159
             dec_data->params.ntol = 100;
             dec_data->params.ntrperiod = 1800; // s
+            dec_data->params.nfqso = 1500; // mainwindow.cpp 3100
+            dec_data->params.nexp_decode = 256 * 3; // mainwindow.cpp 3175
         }
         else {
             screenPrinter->err(decoderLog(workerIndex) + "Unknown mode : " + item.mode);
@@ -500,11 +589,9 @@ public:
 
         screenPrinter->debug(decoderLog(workerIndex) + "copy to shmem complete");
 
-
         mem_jt9.unlock();
 
         screenPrinter->trace(decoderLog(workerIndex) + "shmem unlocked");
-
 
         PROCESS_INFORMATION pi;
 
@@ -569,14 +656,14 @@ public:
         }
 
         const std::string opts = modeOp + " -s " + skey;
-        const std::string  cmdLine = binPath + "\\" + appName + opts;
+        const std::string  cmdLine = binPathX + "\\" + appName + opts;
 
         screenPrinter->print(decoderLog(workerIndex) + "Calling: " + cmdLine, LOG_LEVEL::DEBUG);
         uint64_t startTime = getEpochTimeMs();
 
         // Start the child process. 
         const bool procStatus = CreateProcessA(
-            (binPath + "\\" + appName).c_str(),
+            (binPathX + "\\" + appName).c_str(),
             const_cast<char*>(opts.c_str()),
             NULL,
             NULL,
@@ -624,8 +711,177 @@ public:
 
         mem_jt9.detach();
 
-        const auto timeoutMs = getRXPeriod(item.mode) * 2 * 1000;
-        WaitForSingleObject(pi.hProcess, static_cast<DWORD>(timeoutMs));
+        DWORD timeoutMs = getRXPeriod(item.mode) * 2;
+        if (timeoutMs > 90) {
+            timeoutMs = 90;
+        }
+        WaitForSingleObject(pi.hProcess, static_cast<DWORD>(timeoutMs * 1000));
+
+        // Wait until child process exits.
+        uint64_t stopTime = getEpochTimeMs();
+
+        screenPrinter->debug(decoderLog(workerIndex) + "External " + appName + " process completed in " + std::to_string(static_cast<float>(stopTime - startTime) / 1000) + " sec");
+
+        screenPrinter->debug(decoderLog(workerIndex) + "done reading output");
+
+        CloseHandle(m_hChildStd_OUT_Rd);
+
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+
+    }
+
+    inline void decodeJS8UsingShMem(const ItemToDecode& item, const size_t workerIndex) {
+        std::string skey = "CWSL_DIGI_" + std::to_string(workerIndex) + "_" + std::to_string(item.instanceId) + "_" + std::to_string(getEpochTimeMs()) + "_" + make_uuid();
+
+        QString qkey = QString::fromStdString(skey);
+
+        QSharedMemory mem_jt9;
+
+        mem_jt9.setKey(qkey);
+
+        const bool cStatus = mem_jt9.create(sizeof(dec_data_js8_t));
+        if (!cStatus) {
+            screenPrinter->err(decoderLog(workerIndex) + "Failed to create shared memory segment!");
+            QString es = mem_jt9.errorString();
+            screenPrinter->err(es.toStdString());
+            return;
+        }
+
+        screenPrinter->debug(decoderLog(workerIndex) + "Created shared memory segment. Key=" + skey + " size=" + std::to_string(mem_jt9.size()) + " bytes");
+
+        if (!mem_jt9.lock())
+        {
+            screenPrinter->err(decoderLog(workerIndex) + "Could not acquire lock on shared memory!");
+            return;
+        }
+
+
+        dec_data_js8_t* dec_data = reinterpret_cast<dec_data_js8_t*>(mem_jt9.data());
+        memset(dec_data, 0, sizeof(dec_data_js8_t));
+
+        dec_data->params.nfa = 0;
+        dec_data->params.nfb = highestDecodeFreq;
+
+        dec_data->params.ndepth = decodedepth;
+        dec_data->params.nutc = 0;
+        dec_data->params.newdat = 1;
+        dec_data->params.nagain = 0;
+        dec_data->params.emedelay = 0;
+        dec_data->params.nrobust = 0;
+        dec_data->params.ndiskdat = 0;
+        dec_data->params.minw = 0;
+        dec_data->params.minSync = 0;
+        dec_data->params.dttol = 4;
+        dec_data->params.syncStats = false;
+        dec_data->params.ntrperiod = -1; // not needed
+        dec_data->params.nsubmode = -1;  // not needed
+        dec_data->params.n2pass = 1;
+        dec_data->params.npts8 = 50 * 6912 / 16;
+
+        dec_data->params.kszA = NTMAX * RX_SAMPLE_RATE - 1;
+        dec_data->params.kposA = 0;
+        dec_data->params.nsubmodes = 1;
+
+
+        dec_data->params.lft8apon = false;
+        dec_data->params.nzhsym = 0;
+        dec_data->params.nmode = 8;
+        dec_data->params.napwid = 50;
+
+
+        size_t nel = item.audio.size();
+        if (nel > NTMAX * RX_SAMPLE_RATE) {
+            nel = NTMAX * RX_SAMPLE_RATE;
+        }
+
+        size_t dsz = nel * sizeof(std::int16_t);
+
+        screenPrinter->debug(decoderLog(workerIndex) + "Copying data to shmem, data size=" + std::to_string(dsz) + " bytes");
+
+        memcpy(&(dec_data->d2[0]), item.audio.data(), dsz);
+
+        screenPrinter->debug(decoderLog(workerIndex) + "copy to shmem complete");
+
+        mem_jt9.unlock();
+
+        screenPrinter->trace(decoderLog(workerIndex) + "shmem unlocked");
+
+
+        PROCESS_INFORMATION pi;
+
+        ZeroMemory(&pi, sizeof(pi));
+
+        SECURITY_ATTRIBUTES saAttr;
+        ZeroMemory(&saAttr, sizeof(saAttr));
+        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+        saAttr.bInheritHandle = TRUE;
+
+        saAttr.lpSecurityDescriptor = NULL;
+
+        HANDLE m_hChildStd_OUT_Rd = NULL;
+        HANDLE m_hChildStd_OUT_Wr = NULL;
+
+        // Create a pipe for the child process's STDOUT. 
+
+        if (!CreatePipe(&m_hChildStd_OUT_Rd, &m_hChildStd_OUT_Wr, &saAttr, 0))
+        {
+            return;
+        }
+
+        // Ensure the read handle to the pipe for STDOUT is not inherited.
+
+        if (!SetHandleInformation(m_hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0))
+        {
+            return;
+        }
+
+        STARTUPINFO si;
+        ZeroMemory(&si, sizeof(si));
+        si.cb = sizeof(si);
+        si.hStdError = m_hChildStd_OUT_Wr;
+        si.hStdOutput = m_hChildStd_OUT_Wr;
+        si.dwFlags |= STARTF_USESTDHANDLES;
+
+        std::string appName = "js8.exe";
+        std::string modeOp = "-8 -m " + std::to_string(numjt9threads) + " "; // -8 is JS8
+   
+        const std::string opts = modeOp + " -s " + skey;
+        const std::string  cmdLine = binPathJS + "\\" + appName + opts;
+
+        screenPrinter->print(decoderLog(workerIndex) + "Calling: " + cmdLine, LOG_LEVEL::DEBUG);
+        uint64_t startTime = getEpochTimeMs();
+
+        // Start the child process. 
+        const bool procStatus = CreateProcessA(
+            (binPathJS + "\\" + appName).c_str(),
+            const_cast<char*>(opts.c_str()),
+            NULL,
+            NULL,
+            true,
+            0,
+            NULL,
+            item.cwd.c_str(),
+            &si,
+            &pi
+        );
+
+        if (!procStatus) {
+            screenPrinter->err(decoderLog(workerIndex) + "CreateProcess failed. Error: " + std::to_string(GetLastError()));
+            return;
+        }
+
+        CloseHandle(m_hChildStd_OUT_Wr);
+
+        const bool extStatus = readDataFromExtProgram(m_hChildStd_OUT_Rd, item.epochTime, item.baseFreq, item.mode, item.instanceId, workerIndex);
+
+        mem_jt9.detach();
+
+        DWORD timeoutMs = getRXPeriod(item.mode) * 2;
+        if (timeoutMs > 90) {
+            timeoutMs = 90;
+        }
+        WaitForSingleObject(pi.hProcess, static_cast<DWORD>(timeoutMs * 1000));
 
         // Wait until child process exits.
         uint64_t stopTime = getEpochTimeMs();
@@ -774,23 +1030,37 @@ public:
         }
         else if ("FST4W-120" == item.mode || "FST4W-300" == item.mode || "FST4W-900" == item.mode || "FST4W-1800" == item.mode) {
             appName = "jt9.exe";
-            modeOp += "-W -p " + std::to_string((int)item.trperiod) + " -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " "; // -W is FST4W
+            modeOp += "-W -p " + std::to_string((int)item.trperiod) + " -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " -L 1400 -H 1600 -F 200 "; // -W is FST4W
         }
         else if ("FST4-60" == item.mode || "FST4-120" == item.mode || "FST4-300" == item.mode || "FST4-900" == item.mode || "FST4-1800" == item.mode) {
             appName = "jt9.exe";
-            modeOp += "-7 -p " + std::to_string((int)item.trperiod) + " -m " + std::to_string(numjt9threads) + " -d " + std::to_string(decodedepth) + " "; // -7 is FST4
+            modeOp += "-7 -p " + std::to_string((int)item.trperiod) + " -m " + std::to_string(numjt9threads) + " "; // -7 is FST4
+        }
+        else if ("JS8" == item.mode) {
+            appName = "js8.exe";
+            modeOp += "-8 -m " + std::to_string(numjt9threads) + " "; // -8 is JS8
         }
         else {
             screenPrinter->err(decoderLog(workerIndex) + "Mode " + item.mode + " not handled");
             return;
         }
 
+        std::string binPath;
+        if ("JS8" == item.mode) {
+            binPath = binPathJS;
+        }
+        else {
+            binPath = binPathX;
+        }
+
         const std::string opts = modeOp + wavFileName;
         const std::string  cmdLine = binPath + "\\" + appName + opts;
 
-        uint64_t startTime = getEpochTimeMs();
 
         screenPrinter->print(decoderLog(workerIndex) + "Calling: " + cmdLine, LOG_LEVEL::DEBUG);
+
+
+        uint64_t startTime = getEpochTimeMs();
 
         // Start the child process. 
         const bool procStatus = CreateProcessA(
@@ -917,7 +1187,8 @@ private:
     uint32_t highestDecodeFreq;
 
     bool printJT9Output;
-    std::string binPath;
+    std::string binPathX;
+    std::string binPathJS;
 
     bool keepWavFiles;
 

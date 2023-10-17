@@ -1,7 +1,7 @@
 #pragma once
 
 /*
-Copyright 2021 Alexander Ranaldi
+Copyright 2023 Alexander Ranaldi
 W2AXR
 alexranaldi@gmail.com
 
@@ -29,9 +29,10 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include "SafeQueue.h"
 
-#include <windows.h> // GetSystemTime
+#include "SafeQueue.h"
+#include "CWSL_DIGI.hpp"
+
 
 enum LOG_LEVEL : int {
     MAX_VERBOSE = 8,
@@ -50,7 +51,7 @@ struct LogMessage {
             GetSystemTime(&time);
         }
     std::string str;
-    LOG_LEVEL lvl;
+    LOG_LEVEL lvl{LOG_LEVEL::INFO};
     SYSTEMTIME time;
 };
 

@@ -32,7 +32,6 @@ along with CWSL_DIGI. If not, see < https://www.gnu.org/licenses/>.
 #include <chrono>
 #include <fstream>
 #include <memory>
-#include <windows.h>
 
 class Receiver;
 class ScreenPrinter;
@@ -41,7 +40,6 @@ class DecoderPool;
 #include "SSBD.hpp"
 
 #include "CWSL_DIGI_Types.hpp"
-#include "CWSL_Utils.hpp"
 #include "ring_buffer.h"
 #include "decode_audio_buffer.h"
 #include "ring_buffer_spmc.h"
