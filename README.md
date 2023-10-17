@@ -11,7 +11,7 @@ CWSL_DIGI is released under the GNU GENERAL PUBLIC LICENSE, Version 3.
 
 # Latest Release #
 
-The latest version is 0.88 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.88.zip)
+The latest version is 0.88 - [Download Windows 64-bit zip](https://github.com/alexranaldi/CWSL_DIGI/archive/refs/tags/0.88-Release.zip)
 
 Notable changes in 0.88 include:
 Enhancement: FT8 - support Fox/Hound messages. This will increase the number of FT8 spots significantly if you skim the DX frequencies when an expedition is going on!
