@@ -179,6 +179,12 @@ namespace pskreporter {
     Packet PSKReporter::getReceiverInformation() {
         Packet payload;
 
+        // Template Link ID and length (to be filled in later)
+        payload.push_back(0x99);
+        payload.push_back(0x92);
+        payload.push_back(0x00);
+        payload.push_back(0x00);
+
         payload.push_back(static_cast<Byte>(mReceiverCallsign.size()));
         for (char c : mReceiverCallsign) {
             payload.push_back(c);
@@ -198,20 +204,11 @@ namespace pskreporter {
             payload.push_back(0);
         }
 
-        Packet out;
-        packetAppend(out, 0x99);
-        packetAppend(out, 0x92);
-
-        uint16_t totalSize = static_cast<std::uint16_t>(payload.size() + 4);
-
-        packetAppend(out, (totalSize & 0xFF00) >> 16);
-        packetAppend(out, totalSize & 0x00FF);
-
-        for (auto v : payload) {
-            packetAppend(out, v);
-        }
+        const uint16_t totalSize = static_cast<std::uint16_t>(payload.size());
+        payload[2] = static_cast<Byte>((totalSize & 0xFF00) >> 8);
+        payload[3] = static_cast<Byte>(totalSize & 0x00FF);
                
-        return out;
+        return payload;
     }
 
 
@@ -317,7 +314,7 @@ namespace pskreporter {
         }
 
         const uint16_t totalSize = static_cast<std::uint16_t>(payload.size());
-        payload[2] = static_cast<Byte>((totalSize & 0xFF00) >> 16);
+        payload[2] = static_cast<Byte>((totalSize & 0xFF00) >> 8);
         payload[3] = static_cast<Byte>(totalSize & 0x00FF);
 
         return payload;
@@ -454,19 +451,19 @@ namespace pskreporter {
     }
 
     std::vector<std::uint8_t> PSKReporter::getDescriptorReceiver() {
-        std::vector<std::uint8_t> out = {
-            0x00, 0x03, 0x00, 0x24, 0x99, 0x92, 0x00, 0x03, 0x00, 0x00,
-            0x80, 0x02, 0xFF, 0xFF, 0x00, 0x00, 0x76, 0x8F,
-            0x80, 0x04, 0xFF, 0xFF, 0x00, 0x00, 0x76, 0x8F,
-            0x80, 0x08, 0xFF, 0xFF, 0x00, 0x00, 0x76, 0x8F,
-            0x00, 0x00,
+        // 0x24 is size = 36 bytes
+        return {
+            0x00, 0x03, 0x00, 0x24, 0x99, 0x92, 0x00, 0x03,
+            0x00, 0x00, 0x80, 0x02, 0xFF, 0xFF, 0x00, 0x00,
+            0x76, 0x8F, 0x80, 0x04, 0xFF, 0xFF, 0x00, 0x00,
+            0x76, 0x8F, 0x80, 0x08, 0xFF, 0xFF, 0x00, 0x00,
+            0x76, 0x8F, 0x00, 0x00,
         };
-        return out;
     }
 
     std::vector<std::uint8_t> PSKReporter::getDescriptorSender(REPORT_TYPE reportType) {
         if (reportType == REPORT_TYPE::TYPE_HAS_LOCATOR) {
-            // 3C is size
+            // 0x3C is size = 60 bytes
             return {
                 0x00, 0x02, 0x00, 0x3C, 0x64, 0xAF, 0x00, 0x07,
                 0x80, 0x01, 0xFF, 0xFF, 0x00, 0x00, 0x76, 0x8F,
@@ -481,8 +478,8 @@ namespace pskreporter {
         else
         {
             return {
-                // 2E is size
-                0x00, 0x02, 0x00, 0x2E, 0x62, 0xA7, 0x00, 0x06,
+                // 0x34 is size = 52 bytes
+                0x00, 0x02, 0x00, 0x34, 0x62, 0xA7, 0x00, 0x06,
                 0x80, 0x01, 0xFF, 0xFF, 0x00, 0x00, 0x76, 0x8F,
                 0x80, 0x05, 0x00, 0x04, 0x00, 0x00, 0x76, 0x8F,
                 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x76, 0x8F,
